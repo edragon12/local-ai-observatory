@@ -6,4 +6,4 @@ Python is a separately installed prerequisite, not bundled. See https://docs.pyt
 
 Ollama is optional, separately installed software. No model weights are included; model licenses vary and must be reviewed by users.
 
-No provider logos, third-party fonts or external image assets are included. The original project's license selection remains pending owner approval before publication.
+No provider logos, third-party fonts or external image assets are included. The original project code is MIT licensed (see LICENSE). Third-party components keep their own licenses.
