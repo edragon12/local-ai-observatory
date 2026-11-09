@@ -59,4 +59,4 @@ Optional JavaScript syntax check with Node.js: `node --check app.js`.
 
 This is an unsigned source preview, not a notarized macOS application or DMG. Review and test before wider distribution. Do not disable Gatekeeper; launch using Terminal as above. No updater, startup service or privileged collector is installed.
 
-A project license must be selected by the owner before public publication. This package does not grant a new license for original project code. Third-party components retain their own licenses; see THIRD_PARTY_NOTICES.md.
+The original project code is MIT licensed (see LICENSE). Third-party components keep their own licenses (see THIRD_PARTY_NOTICES.md).
