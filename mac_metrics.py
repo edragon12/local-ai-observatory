@@ -5,15 +5,72 @@ import shutil
 import subprocess
 import time
 import json
+from pathlib import Path
 from urllib.request import build_opener, ProxyHandler
 
 
-def command(args):
+def command(args, timeout=5):
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=5)
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return p.stdout.strip() if p.returncode == 0 else ''
     except (OSError, subprocess.TimeoutExpired):
         return ''
+
+
+def parse_cpuinfo(text):
+    for line in text.splitlines():
+        key, sep, value = line.partition(':')
+        if sep and key.strip().lower() == 'model name' and value.strip():
+            return value.strip()
+    return ''
+
+
+def linux_cpu_model():
+    try:
+        text = Path('/proc/cpuinfo').read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return platform.machine()
+    return parse_cpuinfo(text) or platform.machine()
+
+
+def gpu_present():
+    """A GPU Ollama can use. size_vram alone is not evidence on CPU-only hosts."""
+    if platform.system() == 'Darwin' and platform.machine() in ('arm64', 'aarch64'):
+        return True
+    for args in (['nvidia-smi', '-L'], ['rocm-smi', '-i']):
+        if command(args, timeout=1):
+            return True
+    return False
+
+
+def _details(row):
+    details = row.get('details')
+    return details if isinstance(details, dict) else {}
+
+
+def installed_row(row):
+    details = _details(row)
+    size = row.get('size')
+    return {'name': row.get('name') or 'Unknown',
+            'size': size if isinstance(size, int) else None,
+            'parameters': details.get('parameter_size') or 'Unknown',
+            'quantization': details.get('quantization_level') or 'Unknown'}
+
+
+def loaded_row(row, include_vram):
+    """Resident size, runtime context, and keep-alive expiry come from /api/ps.
+    VRAM is attached only when the caller has an independent GPU signal."""
+    item = installed_row(row)
+    context = row.get('context_length')
+    if isinstance(context, int) and context > 0:
+        item['context_length'] = context
+    expires = row.get('expires_at')
+    if isinstance(expires, str) and expires:
+        item['expires_at'] = expires
+    vram = row.get('size_vram')
+    if include_vram and isinstance(vram, int) and vram > 0:
+        item['vram'] = vram
+    return item
 
 
 def parse_vm(text):
@@ -35,13 +92,16 @@ def parse_swap(text):
 def ollama():
     data = {'installed': [], 'loaded': [], 'status': 'Available'}
     opener = build_opener(ProxyHandler({}))
-    for endpoint, key in [('tags', 'installed'), ('ps', 'loaded')]:
+    include_vram = gpu_present()
+    jobs = (('tags', 'installed', installed_row),
+            ('ps', 'loaded', lambda row: loaded_row(row, include_vram)))
+    for endpoint, key, build in jobs:
         try:
             with opener.open('http://127.0.0.1:11434/api/'+endpoint, timeout=2) as r:
                 rows = json.load(r)['models']
-            data[key] = [{'name': r.get('name', 'Unknown'), 'size': r.get('size'),
-                          'parameters': (r.get('details') or {}).get('parameter_size', 'Unknown'),
-                          'quantization': (r.get('details') or {}).get('quantization_level', 'Unknown')} for r in rows]
+            if not isinstance(rows, list):
+                raise TypeError('models')
+            data[key] = [build(row) for row in rows if isinstance(row, dict)]
         except (OSError, ValueError, KeyError, TypeError):
             data['status'] = 'Unavailable or partial — start Ollama locally'
     return data
@@ -56,7 +116,7 @@ def collect():
     pressure_raw = command(['sysctl', '-n', 'kern.memorystatus_vm_pressure_level']) if is_mac else ''
     pressure = {'1':'Normal', '2':'Warning', '4':'Critical'}.get(pressure_raw, 'Unavailable')
     disk = shutil.disk_usage('/')
-    chip = command(['sysctl', '-n', 'machdep.cpu.brand_string']) if is_mac else platform.machine()
+    chip = command(['sysctl', '-n', 'machdep.cpu.brand_string']) if is_mac else linux_cpu_model()
     return {'sampled_at':time.time(), 'supported_host':is_mac,
             'chip':chip or platform.machine(), 'os':platform.platform(),
             'unified_memory':is_mac and platform.machine() == 'arm64',
