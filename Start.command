@@ -6,9 +6,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else "Python 3.10 or newer required")'
-if [ ! -x .venv/bin/python3 ]; then
-  python3 -m venv .venv
-fi
+python3 bootstrap.py
 if ! .venv/bin/python3 -c 'import psutil; assert psutil.__version__ == "7.2.2"' >/dev/null 2>&1; then
   printf 'Installing the pinned dependency in this folder only; internet required.\n'
   .venv/bin/python3 -m pip install -r requirements.txt

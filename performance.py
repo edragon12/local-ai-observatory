@@ -7,6 +7,12 @@ from urllib.request import Request, build_opener, ProxyHandler
 LOCK = threading.Lock()
 RESULTS = []
 
+def parse_chunk(line):
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        raise ValueError('Ollama returned an unreadable response.')
+
 def consume(rows, model, clock=time.monotonic, started=None):
     started = clock() if started is None else started
     first = None
@@ -62,7 +68,7 @@ def run(model):
                         break
                     if len(line)>262144 or time.monotonic()-started>90:
                         raise ValueError('Runtime response limit reached')
-                    yield json.loads(line)
+                    yield parse_chunk(line)
             result = consume(rows(), model, started=started)
         RESULTS.append(result)
         del RESULTS[:-20]

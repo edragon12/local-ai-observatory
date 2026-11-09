@@ -11,6 +11,12 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(result['wall_seconds'], 3.2)
         self.assertNotIn('private text', str(result))
 
+    def test_unreadable_chunk_is_a_value_error(self):
+        p = importlib.import_module('performance')
+        with self.assertRaises(ValueError) as error:
+            p.parse_chunk(b'{')
+        self.assertEqual(str(error.exception), 'Ollama returned an unreadable response.')
+
     def test_incomplete_stream_rejected(self):
         p = importlib.import_module('performance')
         with self.assertRaises(ValueError):

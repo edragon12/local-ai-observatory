@@ -1,8 +1,10 @@
 import http.client
 import json
+import platform
 import threading
 import unittest
 from pathlib import Path
+import mac_metrics
 import server
 
 class CommunityTests(unittest.TestCase):
@@ -24,6 +26,12 @@ class CommunityTests(unittest.TestCase):
             c=http.client.HTTPConnection('127.0.0.1',s.server_port,timeout=15)
             c.request('GET','/api/hardware');r=c.getresponse();self.assertEqual(r.status,200)
             data=json.loads(r.read());self.assertGreater(data['memory']['total'],0);self.assertIn('ollama',data);c.close()
+            if platform.system()=='Linux':
+                self.assertEqual(data['chip'], mac_metrics.linux_cpu_model())
+                parsed=mac_metrics.parse_cpuinfo(Path('/proc/cpuinfo').read_text(encoding='utf-8', errors='replace'))
+                if parsed: self.assertEqual(data['chip'], parsed)
+                if not mac_metrics.gpu_present():
+                    self.assertNotIn('vram', json.dumps(data['ollama']))
         finally:
             s.shutdown();s.server_close()
 
