@@ -1,4 +1,6 @@
-"""Read-only Apple Silicon metrics. No sudo or external requests."""
+"""Read-only host metrics. No sudo or external requests."""
+import csv
+import io
 import re
 import platform
 import shutil
@@ -57,9 +59,10 @@ def installed_row(row):
             'quantization': details.get('quantization_level') or 'Unknown'}
 
 
-def loaded_row(row, include_vram):
+def loaded_row(row, include_vram, unified=False):
     """Resident size, runtime context, and keep-alive expiry come from /api/ps.
-    VRAM is attached only when the caller has an independent GPU signal."""
+    VRAM is attached only when the caller has an independent GPU signal.
+    On unified memory, gpu_resident is the GPU-mapped share of that same pool."""
     item = installed_row(row)
     context = row.get('context_length')
     if isinstance(context, int) and context > 0:
@@ -70,7 +73,52 @@ def loaded_row(row, include_vram):
     vram = row.get('size_vram')
     if include_vram and isinstance(vram, int) and vram > 0:
         item['vram'] = vram
+    if unified and isinstance(vram, int) and vram > 0:
+        item['gpu_resident'] = vram
     return item
+
+
+def _optional_float(value):
+    """nvidia-smi prints '[N/A]' when a device does not report a field."""
+    try:
+        number = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and number >= 0 else None
+
+
+def parse_nvidia_query(text):
+    """Parse `nvidia-smi --format=csv,noheader,nounits` rows.
+
+    Columns: name, memory.total MiB, memory.used MiB, utilization.gpu,
+    temperature.gpu, power.draw, power.limit.
+    """
+    output = []
+    for row in csv.reader(io.StringIO(text or '')):
+        if len(row) < 5:
+            continue
+        try:
+            output.append({
+                'name': row[0].strip()[:120],
+                'total': int(float(row[1])) * 1024**2,
+                'used': int(float(row[2])) * 1024**2,
+                'percent': float(row[3]),
+                'temperature': _optional_float(row[4]),
+                'power_draw': _optional_float(row[5]) if len(row) > 5 else None,
+                'power_limit': _optional_float(row[6]) if len(row) > 6 else None,
+            })
+        except (ValueError, IndexError):
+            continue
+    return output
+
+
+def query_gpus():
+    text = command([
+        'nvidia-smi',
+        '--query-gpu=name,memory.total,memory.used,utilization.gpu,temperature.gpu,power.draw,power.limit',
+        '--format=csv,noheader,nounits',
+    ], timeout=3)
+    return parse_nvidia_query(text)
 
 
 def parse_vm(text):
@@ -93,8 +141,9 @@ def ollama():
     data = {'installed': [], 'loaded': [], 'status': 'Available'}
     opener = build_opener(ProxyHandler({}))
     include_vram = gpu_present()
+    unified = platform.system() == 'Darwin' and platform.machine() in ('arm64', 'aarch64')
     jobs = (('tags', 'installed', installed_row),
-            ('ps', 'loaded', lambda row: loaded_row(row, include_vram)))
+            ('ps', 'loaded', lambda row: loaded_row(row, include_vram, unified=unified)))
     for endpoint, key, build in jobs:
         try:
             with opener.open('http://127.0.0.1:11434/api/'+endpoint, timeout=2) as r:
@@ -124,4 +173,5 @@ def collect():
             'memory':{'total':vm.total, 'used':vm.total-vm.available, 'available':vm.available,
                       'percent':vm.percent, 'pressure':pressure, **extra,
                       'swap_used':parse_swap(command(['sysctl', '-n', 'vm.swapusage'])) if is_mac else psutil.swap_memory().used},
-            'disk':{'total':disk.total, 'used':disk.used, 'free':disk.free}, 'ollama':ollama()}
+            'disk':{'total':disk.total, 'used':disk.used, 'free':disk.free},
+            'gpus':query_gpus(), 'ollama':ollama()}

@@ -32,8 +32,14 @@ def consume(rows, model, clock=time.monotonic, started=None):
     duration = final.get('eval_duration', 0) / 1e9
     if not isinstance(count, int) or count <= 0 or duration <= 0:
         raise ValueError('Runtime did not supply generation metrics')
+    # Prompt processing (prefill) speed from the same final chunk, when the runtime reports it.
+    p_count, p_ns = final.get('prompt_eval_count'), final.get('prompt_eval_duration')
+    p_ok = type(p_count) is int and p_count > 0 and isinstance(p_ns, (int, float)) and not isinstance(p_ns, bool) and p_ns > 0
     return {'model':model, 'sampled_at':time.time(), 'output_tokens':count,
             'tokens_per_second':round(count/duration, 2),
+            'eval_seconds':round(duration, 3),
+            'prompt_eval_seconds':round(p_ns/1e9, 4) if p_ok else None,
+            'prompt_tokens_per_second':round(p_count/(p_ns/1e9), 2) if p_ok else None,
             'first_token_seconds':round(first, 3) if first is not None else None,
             'wall_seconds':round(elapsed, 3),
             'load_seconds':round(final.get('load_duration', 0)/1e9, 3),

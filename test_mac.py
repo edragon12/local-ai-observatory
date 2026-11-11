@@ -34,4 +34,25 @@ class MacTests(unittest.TestCase):
         self.assertNotIn('expires_at', item)
         self.assertNotIn('vram', item)
 
+    def test_unified_memory_keeps_gpu_share_separate_from_vram(self):
+        row = {'name': 'm', 'size': 100, 'size_vram': 80, 'context_length': 2048, 'details': {}}
+        hidden = mac_metrics.loaded_row(row, False, unified=True)
+        self.assertNotIn('vram', hidden)
+        self.assertEqual(hidden['gpu_resident'], 80)
+        self.assertNotIn('gpu_resident', mac_metrics.loaded_row(row, False, unified=False))
+
+    def test_nvidia_query_parses_power_and_skips_missing_fields(self):
+        text = 'Example GPU, 8192, 2048, 37, 54, 120.50, 250\n"Board, laptop", 4096, 100, 0, [N/A], [N/A], [N/A]\nbad row\n'
+        rows = mac_metrics.parse_nvidia_query(text)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['name'], 'Example GPU')
+        self.assertEqual(rows[0]['total'], 8192 * 1024**2)
+        self.assertEqual(rows[0]['temperature'], 54)
+        self.assertEqual(rows[0]['power_draw'], 120.5)
+        self.assertEqual(rows[0]['power_limit'], 250)
+        self.assertEqual(rows[1]['name'], 'Board, laptop')
+        self.assertIsNone(rows[1]['temperature'])
+        self.assertIsNone(rows[1]['power_draw'])
+        self.assertEqual(mac_metrics.parse_nvidia_query(''), [])
+
 if __name__ == '__main__': unittest.main()

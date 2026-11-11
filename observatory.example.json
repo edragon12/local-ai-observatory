@@ -1,0 +1,27 @@
+{
+  "remote": {
+    "enabled": false,
+    "label": "Remote host",
+    "base_url": "",
+    "host_header": "",
+    "origin": "",
+    "timeout_seconds": 120
+  },
+  "live_tap": {
+    "token_file": "",
+    "listen_host": "127.0.0.1",
+    "listen_port": 8768,
+    "local_model": "",
+    "route_label_pattern": "\\A\\*\\*([^\\*\\n]{1,80})\\*\\*\\n\\n",
+    "local_label_prefix": "local",
+    "allowed_networks": ["127.0.0.0/8", "::1/128"]
+  },
+  "glance": {
+    "path": "",
+    "format": "jsonl",
+    "line_pattern": "",
+    "module": "",
+    "local_providers": ["ollama", "local"],
+    "external_providers": ["openai", "anthropic", "google", "openrouter", "groq"]
+  }
+}

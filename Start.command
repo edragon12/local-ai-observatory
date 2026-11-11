@@ -11,5 +11,6 @@ if ! .venv/bin/python3 -c 'import psutil; assert psutil.__version__ == "7.2.2"' 
   printf 'Installing the pinned dependency in this folder only; internet required.\n'
   .venv/bin/python3 -m pip install -r requirements.txt
 fi
-printf 'Local AI Observatory 0.1.0-preview\nOpen http://127.0.0.1:8767. Keep this window open; Control-C stops it.\n'
+ver=$(tr -d '[:space:]' < VERSION)
+printf 'Local AI Observatory %s\nOpen http://127.0.0.1:8767. Keep this window open; Control-C stops it.\n' "$ver"
 .venv/bin/python3 server.py --port 8767
