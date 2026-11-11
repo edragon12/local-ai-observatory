@@ -7,6 +7,7 @@ class PerformanceTests(unittest.TestCase):
         rows = [{'message': {'content':'private text'}}, {'done':True,'eval_count':20,'eval_duration':2_000_000_000,'prompt_eval_count':10,'prompt_eval_duration':500_000_000,'load_duration':100_000_000,'total_duration':3_000_000_000}]
         result = p.consume(rows, 'local-model', clock=iter([0,0.4,3.2]).__next__)
         self.assertEqual(result['tokens_per_second'], 10)
+        self.assertEqual(result['prompt_tokens_per_second'], 20)
         self.assertEqual(result['first_token_seconds'], 0.4)
         self.assertEqual(result['wall_seconds'], 3.2)
         self.assertNotIn('private text', str(result))

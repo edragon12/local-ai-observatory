@@ -9,3 +9,11 @@ The app makes no cloud inference calls, has no analytics, and serves its own ass
 Hardware/model metadata may be sensitive. The server is loopback-only and checks Host headers. Inference requests require same-origin Origin and empty body. There is no multi-user authentication. Loopback binding is not a security boundary against other software or users on the same computer.
 
 Do not forward its port to untrusted networks. No root or elevated collector is required. Python and dependencies require normal maintenance. Security checks here are targeted tests, not an independent security audit.
+
+## Optional features (off until configured)
+
+Prompt tokenization sends the text you type to this loopback server, which reads tokenizer metadata from a local GGUF file. The text is not logged. "Remember text in this browser" is off until you check it, and then the text stays in this browser's local storage only.
+
+The live receiver starts only when its token file exists. It keeps the newest few turns in memory for about 10 minutes and writes nothing. Ask for text only while Show text is on and Post mode is off. Otherwise the page receives counts and token lengths, not token ids. The Open WebUI filter sends events only after you set a token. It does not change the chat.
+
+A remote host, if enabled, must be a loopback URL. The browser never talks to it directly. Remote probes and tokenization run only after a click. Glance counts come from a log path you set, or from that remote dashboard's own glance response. No account token or plan quota is collected.

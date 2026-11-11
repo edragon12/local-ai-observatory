@@ -1,0 +1,3 @@
+{"time":"2026-01-02 03:04:05","model":"example-local","provider":"ollama","route":"local"}
+{"time":"2026-01-02 03:10:00","model":"example-external","provider":"openai","route":"external"}
+{"time":"2026-01-02 03:12:00","model":"example-other","provider":"custom"}
