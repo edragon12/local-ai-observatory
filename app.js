@@ -268,7 +268,7 @@ for(const key of ['local','remote']){
   q('overview-tag').textContent=key==='local'?'THIS COMPUTER':'REMOTE HOST';
   q('lv-title').textContent='Live from Open WebUI · '+(key==='local'?'this computer':'remote host');
   q('tk-title').textContent='Prompt tokens · '+(key==='local'?'this computer':'remote host');
-  views[key]={key,cfg,q,part,hardware:null,results:[],runs:loadRuns(key),busy:false,loading:false,stale:false,lastOk:null,tkBusy:false,tkResults:[],liveData:null,liveTimer:null,liveShown:null};
+  views[key]={key,cfg,q,part,hardware:null,results:[],runs:loadRuns(key),busy:false,loading:false,stale:false,lastOk:null,tkBusy:false,tkResults:[],liveData:null,liveTimer:null,liveShown:null,routeHistory:[],routeSource:null,routeExample:null,routeTimer:null,routeRaf:0,routeLive:null};
 }
 function fitBar(pool){
   const bar=el('div');bar.className='fitbar';bar.setAttribute('role','img');
@@ -452,6 +452,172 @@ async function runTokenize(v){
 }
 function liveShowText(v){return !postMode&&v.q('lv-show-text').checked;}
 function syncShowText(v){const box=v.q('lv-show-text'),lab=box.closest('label');box.disabled=postMode;lab.classList.toggle('on',liveShowText(v));lab.querySelector('span').textContent=postMode?'Text hidden in Post mode':(box.checked?'Showing prompt & reply text':'Show prompt & reply text');}
+function routeReduced(){return !!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);}
+function renderRouteHistory(box,history){
+  box.replaceChildren();
+  box.append(el('span',history.length?'Recent':'Recent · no turns yet'));
+  box.lastChild.className='note';
+  for(const item of history){const dot=el('span');dot.className='route-dot '+(item.route==='local'||item.route==='external'?item.route:'direct');dot.title=routeHistoryNote(item.route);box.append(dot);}
+}
+function paintRoute(v){
+  const panel=v.q('route-map'),box=v.q('route-canvas');
+  if(!panel||panel.hidden||typeof routeMapFrame!=='function')return;
+  const source=v.routeSource,example=!!(source&&source.example);
+  const frame=routeMapFrame(source?source.turn:null);
+  v.q('route-example').hidden=!example;
+  const ns='http://www.w3.org/2000/svg',layout=frame.layout,svg=document.createElementNS(ns,'svg');
+  const extraH=frame.extras&&frame.extras.length?78:0;
+  svg.setAttribute('viewBox','0 0 '+layout.width+' '+(layout.height+extraH));svg.setAttribute('role','img');svg.setAttribute('aria-label',routeMapLabel(frame,postMode));
+  const zone=layout.zone,z=document.createElementNS(ns,'rect');
+  z.setAttribute('x',zone.x);z.setAttribute('y',zone.y);z.setAttribute('width',zone.w);z.setAttribute('height',zone.h);z.setAttribute('rx','12');z.setAttribute('class','route-zone '+frame.zone);svg.append(z);
+  const zt=document.createElementNS(ns,'text');zt.setAttribute('x',zone.x+14);zt.setAttribute('y',zone.y+22);zt.setAttribute('class','zone-label');zt.textContent=zone.title;svg.append(zt);
+  for(const edge of frame.edges){const path=document.createElementNS(ns,'path');path.setAttribute('d',routePathD(edge.points));path.setAttribute('class','route-edge '+edge.tone+(edge.completed?' completed':'')+(edge.pulse?' pulse':''));svg.append(path);}
+  const card=layout.card;
+  for(const node of frame.nodes){
+    const g=document.createElementNS(ns,'g');g.setAttribute('class','route-node '+node.tone);
+    const rect=document.createElementNS(ns,'rect');rect.setAttribute('x',node.x);rect.setAttribute('y',node.y);rect.setAttribute('width',card.w);rect.setAttribute('height',card.h);rect.setAttribute('rx',card.r);g.append(rect);
+    const title=document.createElementNS(ns,'text');title.setAttribute('x',node.x+card.w/2);title.setAttribute('y',node.y+(node.sub&&!node.host?22:30));title.setAttribute('text-anchor','middle');title.setAttribute('class','node-title');title.textContent=node.title;g.append(title);
+    if(node.sub&&!node.host){const sub=document.createElementNS(ns,'text');sub.setAttribute('x',node.x+card.w/2);sub.setAttribute('y',node.y+38);sub.setAttribute('text-anchor','middle');sub.setAttribute('class','node-sub');sub.textContent=node.sub;g.append(sub);}
+    if(node.host&&node.sub&&routeHostVisible(postMode)){const sub=document.createElementNS(ns,'text');sub.setAttribute('x',node.x+card.w/2);sub.setAttribute('y',node.y+card.h+16);sub.setAttribute('text-anchor','middle');sub.setAttribute('class','node-sub private');sub.textContent=node.sub;g.append(sub);}
+    if(node.slot==='prompt'&&routePromptVisible(frame,postMode)){const sub=document.createElementNS(ns,'text');sub.setAttribute('x',node.x+card.w/2);sub.setAttribute('y',node.y+card.h+16);sub.setAttribute('text-anchor','middle');sub.setAttribute('class','node-sub private');const text=frame.prompt.length>32?frame.prompt.slice(0,31)+'…':frame.prompt;sub.textContent=text;g.append(sub);}
+    svg.append(g);
+  }
+  (frame.extras||[]).forEach((item,i)=>{
+    const x=18+i*156,y=layout.height+12,g=document.createElementNS(ns,'g');g.setAttribute('class','route-node extra '+item.tone);
+    const rect=document.createElementNS(ns,'rect');rect.setAttribute('x',x);rect.setAttribute('y',y);rect.setAttribute('width',144);rect.setAttribute('height',40);rect.setAttribute('rx',10);g.append(rect);
+    const title=document.createElementNS(ns,'text');title.setAttribute('x',x+72);title.setAttribute('y',y+25);title.setAttribute('text-anchor','middle');title.setAttribute('class','node-title');title.textContent=item.title+(item.detail?' · '+item.detail:'');g.append(title);
+    svg.append(g);
+  });
+  if(frame.pulseTravel.length){
+    const motion=routeMapMotion(frame,routeReduced());
+    const at=routePulsePosition(frame,motion.animate?0:1);
+    if(at){const dot=document.createElementNS(ns,'circle');dot.setAttribute('class','route-pulse '+(frame.route==='external'?'external':frame.route==='local'?'local':'common'));dot.setAttribute('cx',at.x);dot.setAttribute('cy',at.y);dot.setAttribute('r','6');svg.append(dot);}
+  }
+  box.replaceChildren(svg);
+  v.q('route-stats').replaceChildren(...frame.stats.map(s=>{const c=el('div');c.className='route-stat';c.append(el('span',s.label),el('strong',s.value));return c;}));
+  v.q('route-caption').textContent=example?'Scripted path only. It is left out of Recent.':frame.phase==='idle'?'No turn yet. The map fills in when a chat turn reaches the live view.':'The pulse is on the stage this turn is in. A dim path was not taken.';
+  renderTrace(v,source?source.turn:null);
+  renderRouteHistory(v.q('route-history'),v.routeHistory||[]);
+  animateRoutePulse(v,frame);
+}
+function renderTrace(v,turn){
+  const trace=v.q('route-trace'),missing=v.q('route-missing'),side=v.q('route-untimed');
+  if(!trace||typeof traceView!=='function')return;
+  const view=traceView(turn,{post:postMode,showToolNames:!!v.showToolNames});
+  v.routeTrace=view;
+  const total=view.total||1;
+  trace.replaceChildren();
+  for(const row of view.rows){
+    const line=el('div');line.className='trace-row'+(row.status==='error'?' is-error':row.status==='skipped'?' is-skipped':'');
+    line.dataset.start=String(row.start==null?'':row.start);line.dataset.end=String(row.end==null?'':row.end);
+    line.append(el('span',row.lane));
+    const copy=el('div');copy.append(el('strong',row.label));
+    if(row.detail)copy.append(el('small',row.detail));
+    line.append(copy);
+    const bar=el('span');bar.className='trace-bar';const fill=el('span');
+    const start=typeof row.start==='number'?row.start:0,end=typeof row.end==='number'?row.end:start;
+    fill.style.marginLeft=(100*Math.max(0,start)/total)+'%';
+    fill.style.width=Math.max(end>start?100*(end-start)/total:0,1.2)+'%';
+    bar.append(fill);line.append(bar);
+    line.append(el('em',row.source));
+    trace.append(line);
+  }
+  if(missing)missing.textContent=view.missing;
+  if(side){side.replaceChildren();for(const item of view.untimed){const chip=el('span',item.label+' '+item.value+' · '+item.source);chip.className='trace-fact';side.append(chip);}}
+}
+function markTrace(v,t){
+  const rows=v.q('route-trace');if(!rows)return;
+  for(const line of rows.children){
+    const start=line.dataset.start===''?null:Number(line.dataset.start);
+    const on=start!==null&&t+0.0001>=start;
+    line.classList.toggle('is-on',on);
+  }
+}
+function playRecordedTurn(v){
+  if(!v.q('route-map')||v.q('route-map').hidden)return;
+  const turn=v.routeSource&&v.routeSource.turn;
+  if(!turn||!turn.state||turn.state==='idle'){v.q('route-caption').textContent='No recorded turn to play.';return;}
+  const view=v.routeTrace||traceView(turn,{post:postMode,showToolNames:!!v.showToolNames});
+  const plan=playbackPlan(view.total),reduced=routeReduced(),example=!!(v.routeSource&&v.routeSource.example);
+  if(v.routePlayRaf)cancelAnimationFrame(v.routePlayRaf);
+  v.routePlayback={plan,example};
+  const badge=v.q('route-playback');badge.hidden=false;
+  badge.textContent=(example?'EXAMPLE · FAKE DATA':'PLAYBACK OF A RECORDED TURN')+(plan.spedUp?' · sped up '+plan.speed.toFixed(1)+'×':'');
+  if(reduced){markTrace(v,playbackTime(plan,0,true));return;}
+  const started=performance.now();
+  const step=now=>{
+    if(!v.routePlayback)return;
+    const wall=(now-started)/1000,t=playbackTime(plan,wall,false);
+    markTrace(v,t);
+    if(wall<plan.playSeconds)v.routePlayRaf=requestAnimationFrame(step);
+  };
+  v.routePlayRaf=requestAnimationFrame(step);
+}
+function animateRoutePulse(v,frame){
+  if(v.routeRaf)cancelAnimationFrame(v.routeRaf);v.routeRaf=0;
+  const dot=v.q('route-canvas').querySelector('.route-pulse');
+  const motion=routeMapMotion(frame,routeReduced());
+  if(!dot||!frame.pulseTravel.length)return;
+  if(!motion.animate){const at=routePulsePosition(frame,1);if(at){dot.setAttribute('cx',at.x);dot.setAttribute('cy',at.y);}return;}
+  const started=performance.now(),dur=1100;
+  const step=now=>{
+    if(v.routeFrameStamp!==frame)return;
+    const t=Math.min(1,(now-started)/dur),at=routePulsePosition(frame,t);
+    if(at){dot.setAttribute('cx',at.x);dot.setAttribute('cy',at.y);}
+    if(t<1)v.routeRaf=requestAnimationFrame(step);
+  };
+  v.routeFrameStamp=frame;v.routeRaf=requestAnimationFrame(step);
+}
+function stopRouteExample(v,restore){
+  clearTimeout(v.routeTimer);v.routeTimer=null;
+  if(v.routeRaf)cancelAnimationFrame(v.routeRaf);v.routeRaf=0;
+  v.routeExample=null;
+  if(!restore)return;
+  const live=v.routeLive;
+  v.routeSource=live?{turn:live,example:false}:{turn:null,example:false};
+  paintRoute(v);
+}
+function playRouteExample(v){
+  if(v.q('route-map').hidden)return;
+  const live=v.routeLive;
+  if(live&&(live.state==='waiting'||live.state==='streaming')){v.q('route-caption').textContent='A live turn is in progress. Replay waits until it finishes.';return;}
+  stopRouteExample(v,false);
+  const steps=routeExampleScript();
+  v.routeExample={playing:true,hold:false};
+  let i=0;
+  const run=()=>{
+    if(!v.routeExample)return;
+    const step=steps[i];
+    v.routeSource={turn:step.turn,example:true};
+    paintRoute(v);
+    i+=1;
+    if(i<steps.length)v.routeTimer=setTimeout(run,steps[i].t-step.t);
+    else{v.routeExample.playing=false;v.routeExample.hold=true;}
+  };
+  run();
+}
+function updateRouteMap(v,d){
+  const panel=v.q('route-map');
+  if(!panel||typeof routeMapFrame!=='function')return;
+  if(v.key==='remote')panel.hidden=!(d&&d.tap&&d.tap.listening);
+  if(panel.hidden)return;
+  if(d&&d.unchanged)return;
+  if(d&&d.state&&d.state!=='idle')v.routeLive=d;else if(d&&!d.unchanged)v.routeLive=null;
+  const live=v.routeLive;
+  if(v.routeExample&&live&&(live.state==='waiting'||live.state==='streaming')){
+    v.routeHistory=applyRouteHistory(v.routeHistory,d,false);
+    stopRouteExample(v,true);
+    return;
+  }
+  if(!(v.routeExample&&(v.routeExample.playing||v.routeExample.hold))){
+    v.routeHistory=applyRouteHistory(v.routeHistory||[],d,false);
+    v.routeSource=live?{turn:live,example:false}:{turn:null,example:false};
+    paintRoute(v);
+  }else{
+    v.routeHistory=applyRouteHistory(v.routeHistory||[],d,false);
+    renderRouteHistory(v.q('route-history'),v.routeHistory);
+  }
+}
 function renderLiveChips(box,part,label){
   box.replaceChildren();
   for(const c of liveChunks(part)){const s=el('span',c.text);s.className='tk s'+c.shade+(c.special?' special':'')+(c.partial?' partial':'')+(c.redacted?' redacted':'');if(c.id!==null&&!postMode)s.title='token id '+c.id;box.append(s);}
@@ -474,6 +640,7 @@ function renderLive(v,d){
   renderLiveChips(v.q('lv-reply'),active?d.reply:null,active&&d.state==='waiting'?'Waiting for the first reply content…':'—');
   if(active&&d.state==='streaming'){const cur=el('span','▍');cur.className='lv-cursor';v.q('lv-reply').append(cur);}
   v.q('lv-note').textContent='Shown from memory only: the newest few turns, for about 10 minutes, never written to disk. Post mode, or turning off Show text, requests counts and token lengths only.';
+  updateRouteMap(v,d);
 }
 async function livePoll(v){
   clearTimeout(v.liveTimer);v.liveTimer=null;
@@ -515,7 +682,7 @@ function setPost(on){
   $('host-label').textContent=host==='local'?'On this computer · loopback only':(postMode?'Remote host':labels.remote);
   try{localStorage.setItem(POST_KEY,postMode?'on':'off');}catch{}
   for(const v of Object.values(views)){if(v.hardware)renderOverview(v);renderHistory(v);syncShowText(v);if(v.tkResults.length)renderTokenResults(v);
-    v.liveData=null;v.q('lv-prompt').replaceChildren();v.q('lv-reply').replaceChildren();}
+    v.liveData=null;v.q('lv-prompt').replaceChildren();v.q('lv-reply').replaceChildren();paintRoute(v);}
   renderCompare();livePoll(views[host]);
 }
 for(const v of Object.values(views)){
@@ -529,6 +696,9 @@ for(const v of Object.values(views)){
   v.q('tk-remember').onchange=()=>{const on=v.q('tk-remember').checked;for(const w of Object.values(views))w.q('tk-remember').checked=on;try{if(on)localStorage.setItem(TK_TEXT_KEY,v.q('tk-input').value);else localStorage.removeItem(TK_TEXT_KEY);}catch{}};
   v.part('live').addEventListener('toggle',()=>livePoll(v));
   v.q('lv-show-text').onchange=()=>{syncShowText(v);v.liveData=null;livePoll(v);};
+  v.q('route-replay').onclick=()=>playRouteExample(v);
+  v.q('route-play').onclick=()=>playRecordedTurn(v);
+  v.q('route-tool-names').onchange=()=>{v.showToolNames=v.q('route-tool-names').checked;paintRoute(v);};
   syncShowText(v);
 }
 try{const saved=localStorage.getItem(TK_TEXT_KEY);if(saved!==null)for(const v of Object.values(views)){v.q('tk-input').value=saved;v.q('tk-remember').checked=true;}}catch{}
@@ -541,7 +711,7 @@ try{savedTheme=localStorage.getItem('observatory-theme')||'dark';savedPost=local
 setTheme(savedTheme==='light'?'light':'dark');
 setPost(savedPost==='on');
 async function boot(){
-  try{const r=await fetch('/api/config');if(r.ok){const cfg=await r.json();remoteEnabled=!!(cfg.remote&&cfg.remote.enabled);if(cfg.remote&&cfg.remote.label)labels.remote=cfg.remote.label;$('build-label').textContent=(cfg.version||'0.2.0')+' · 10-second updates while visible · No cloud fallback';}}catch{}
+  try{const r=await fetch('/api/config');if(r.ok){const cfg=await r.json();remoteEnabled=!!(cfg.remote&&cfg.remote.enabled);if(cfg.remote&&cfg.remote.label)labels.remote=cfg.remote.label;$('build-label').textContent=(cfg.version||'0.3.0')+' · 10-second updates while visible · No cloud fallback';const liveOn=!!(cfg.live_tap&&cfg.live_tap.enabled);views.local.q('route-map').hidden=!liveOn;views.remote.q('route-map').hidden=true;if(liveOn)paintRoute(views.local);}}catch{}
   $('remote-tab').hidden=!remoteEnabled;
   if(!postMode)$('remote-tab').textContent=labels.remote;
   renderCompare();
@@ -550,6 +720,7 @@ async function boot(){
   refreshGlance();livePoll(views.local);
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshHardware(views[host]);livePoll(views[host]);}});
+if(window.matchMedia){const mq=window.matchMedia('(prefers-reduced-motion: reduce)');const apply=()=>{for(const v of Object.values(views))if(!v.q('route-map').hidden)paintRoute(v);};if(mq.addEventListener)mq.addEventListener('change',apply);}
 setInterval(()=>{if(document.hidden)return;const v=views[host];if(!v.busy)refreshHardware(v);refreshHistory(views.local);if(remoteEnabled)refreshHistory(views.remote);refreshGlance();},10000);
 boot();
 }

@@ -25,7 +25,9 @@ SECURITY = {
     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
     'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 }
-FILES = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
+FILES = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript'),
+         '/route_map.js': ('route_map.js', 'text/javascript'), '/trace_helpers.js': ('trace_helpers.js', 'text/javascript'),
+         '/style.css': ('style.css', 'text/css')}
 TOKEN_LOCK = threading.Lock()
 
 

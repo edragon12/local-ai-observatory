@@ -10,6 +10,11 @@ is recorded as the route and is not the first generated token: the first-token
 clock starts on the first chunk that contains reply content after the label.
 Direct streams, with no label, still time the first chunk.
 
+Router data is not read from the chat request. A router may attach an
+observatory/v1 object to a response chunk, POST it to /live/route, or append
+it to a JSON-lines log. See docs/route-events.md. Unknown fields are dropped.
+This package does not include a router.
+
 GET /api/live returns text only when text=1. Otherwise it returns counts and
 per-token character lengths, not token ids.
 """
@@ -24,6 +29,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import observatory_v1
+import route_log
+
 
 HOLD_SECONDS = 600
 MAX_TURNS = 3
@@ -36,6 +44,16 @@ TURN_ID = re.compile(r'[A-Za-z0-9_-]{1,80}')
 MODEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,199}')
 DEFAULT_ROUTE_LABEL = re.compile(r'\A\*\*([^*\n]{1,80})\*\*\n\n')
 DEFAULT_NETS = ('127.0.0.0/8', '::1/128')
+TIMING_KEYS = ('route_seconds', 'left_network_seconds')
+MAX_TIMING = 86400.0
+MATCH_WINDOW = 20.0
+BUILTIN_FLAGS = ('web_search', 'image_generation', 'code_interpreter', 'memory')
+SOURCE_RANK = {
+    'router stream': 3,
+    'router sidecar': 2,
+    'router sidecar (matched by time)': 1,
+    'router log (matched by time)': 1,
+}
 
 
 def default_token_path(environ=None):
@@ -78,6 +96,50 @@ def compile_label(pattern):
     return compiled if compiled.groups >= 1 else DEFAULT_ROUTE_LABEL
 
 
+def clean_route_reason(value):
+    """Short text, or None. Whitespace is collapsed. Nothing is inferred."""
+    if not isinstance(value, str):
+        return None
+    text = ' '.join(value.split())
+    return text[:120] if text else None
+
+
+def clean_timing(value):
+    """Both known keys, null when absent or not a finite non-negative number."""
+    out = {key: None for key in TIMING_KEYS}
+    if not isinstance(value, dict):
+        return out
+    for key in TIMING_KEYS:
+        raw = value.get(key)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            continue
+        if raw != raw or raw < 0 or raw > MAX_TIMING:
+            continue
+        out[key] = round(float(raw), 3)
+    return out
+
+
+def merge_timing(current, incoming):
+    """Fill keys the new event actually reports. Invalid keys do not erase a prior value."""
+    base = clean_timing(current)
+    if not isinstance(incoming, dict):
+        return base
+    parsed = clean_timing(incoming)
+    for key in TIMING_KEYS:
+        if key in incoming and parsed[key] is not None:
+            base[key] = parsed[key]
+    return base
+
+
+def classify_route(label, local_prefix):
+    """local, external, or direct. A missing label is direct, not a guess."""
+    if label and str(label).lower().startswith((local_prefix or 'local').lower()):
+        return 'local'
+    if label:
+        return 'external'
+    return 'direct'
+
+
 def split_label(text, pattern):
     """Return (label or None, reply text without a leading label)."""
     if not text:
@@ -102,12 +164,22 @@ def networks(items):
 
 
 class Turn:
-    __slots__ = ('id', 'model', 'started', 'first', 'last', 'ended', 'prompt', 'context', 'messages', 'reply', 'seq')
+    __slots__ = ('id', 'model', 'started', 'first', 'last', 'ended', 'prompt', 'context', 'messages', 'reply', 'seq',
+                 'observatory', 'observatory_source', 'builtins', 'connection', 'tasks', 'owui_tools', 'usage', 'sources')
 
     def __init__(self, turn_id, model, started):
         self.id, self.model, self.started = turn_id, model, started
         self.first = self.last = self.ended = None
         self.prompt, self.context, self.messages, self.reply, self.seq = '', '', 0, '', 0
+        self.observatory = None
+        self.observatory_source = None
+        self.builtins = {key: None for key in BUILTIN_FLAGS}
+        self.builtins.update(files=None, tool_ids=None)
+        self.connection = None
+        self.tasks = []
+        self.owui_tools = []
+        self.usage = {}
+        self.sources = None
 
 
 class LiveHub:
@@ -121,6 +193,7 @@ class LiveHub:
         self.listening = False
         self.listen_error = None
         self._cache = {}
+        self.route_log = {}
         self.route_label = compile_label(route_label or DEFAULT_ROUTE_LABEL)
         self.local_prefix = (local_prefix or 'local').lower()
         self.local_model = local_model or ''
@@ -171,10 +244,25 @@ class LiveHub:
                             turn.first = at
                 elif kind == 'end' and turn is not None:
                     turn.ended = at
+                elif kind == 'observatory' and turn is not None:
+                    self._merge_obs(turn, event.get('observatory'), event.get('via') or 'router stream')
+                elif kind == 'context' and turn is not None:
+                    self._merge_context(turn, event)
+                elif kind == 'task':
+                    self._add_task(turn, event, at)
+                elif kind == 'tool' and turn is not None:
+                    self._note_tool(turn, event, at)
+                elif kind == 'usage' and turn is not None:
+                    self._merge_usage(turn, event.get('usage'))
+                elif kind == 'sources' and turn is not None:
+                    count = event.get('count')
+                    if type(count) is int and 0 <= count <= 10000:
+                        turn.sources = count
                 else:
                     continue
                 self.seq += 1
-                turn.seq = self.seq
+                if turn is not None:
+                    turn.seq = self.seq
                 applied += 1
             if applied:
                 self.events += applied
@@ -182,32 +270,189 @@ class LiveHub:
             self._expire(now)
         return applied
 
+    def _merge_obs(self, turn, raw, source):
+        source = observatory_v1.source_name(source) or 'router stream'
+        if turn.observatory_source and SOURCE_RANK.get(source, 0) < SOURCE_RANK.get(turn.observatory_source, 0):
+            return
+        merged = observatory_v1.merge_observatory(turn.observatory, raw)
+        if not merged:
+            return
+        turn.observatory = merged
+        turn.observatory_source = source
+
+    def _merge_context(self, turn, event):
+        for key in BUILTIN_FLAGS:
+            if isinstance(event.get(key), bool):
+                turn.builtins[key] = event[key]
+        for key in ('files', 'tool_ids'):
+            if type(event.get(key)) is int and 0 <= event[key] <= 10000:
+                turn.builtins[key] = event[key]
+        if event.get('owned_by') == 'ollama':
+            turn.connection = 'local'
+        elif event.get('owned_by') == 'external':
+            turn.connection = 'external'
+
+    def _add_task(self, turn, event, at):
+        name = event.get('name') if isinstance(event.get('name'), str) else ''
+        name = ' '.join(name.split())[:40]
+        if not name:
+            return
+        item = {'name': name, 'at': at}
+        if turn is not None:
+            turn.tasks = (turn.tasks + [item])[-20:]
+            return
+        # A background task with no open turn is kept only when one turn is in progress.
+        active = [item_turn for item_turn in self.turns if item_turn.ended is None]
+        if len(active) == 1:
+            active[0].tasks = (active[0].tasks + [item])[-20:]
+
+    def _note_tool(self, turn, event, at):
+        phase = event.get('phase')
+        name = event.get('name') if isinstance(event.get('name'), str) else ''
+        name = ' '.join(name.split())[:80]
+        if phase == 'start' and name:
+            turn.owui_tools.append({'name': name, 'start': at, 'end': None})
+            turn.owui_tools = turn.owui_tools[-60:]
+        elif phase == 'end':
+            for tool in turn.owui_tools:
+                if tool['end'] is None:
+                    tool['end'] = at
+        elif phase == 'name' and name and not any(tool['name'] == name for tool in turn.owui_tools):
+            turn.owui_tools.append({'name': name, 'start': None, 'end': None})
+            turn.owui_tools = turn.owui_tools[-60:]
+
+    def _merge_usage(self, turn, usage):
+        if not isinstance(usage, dict):
+            return
+        for key in ('load_ms', 'prompt_eval_ms', 'eval_ms', 'prompt_tokens', 'completion_tokens'):
+            raw = usage.get(key)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                continue
+            if raw < 0 or raw != raw:
+                continue
+            turn.usage[key] = raw if type(raw) is int else round(float(raw), 3)
+
+    def _covers(self, turn, now):
+        end = turn.ended or turn.last or now
+        return turn.started - 2 <= now <= end + MATCH_WINDOW
+
+    def _match_time(self, now):
+        """One covering turn, or None when zero or several could match."""
+        found = [turn for turn in self.turns if self._covers(turn, now)]
+        if len(found) == 1:
+            return found[0]
+        return None
+
+    def accept_route(self, payload, now=None):
+        """Sidecar POST. A turn id attaches directly. Otherwise match one turn by time, or refuse."""
+        now = self.clock() if now is None else now
+        if not isinstance(payload, dict):
+            return False
+        raw = payload.get('observatory') if isinstance(payload.get('observatory'), dict) else payload
+        if not observatory_v1.sanitize_observatory(raw):
+            return False
+        turn_id = payload.get('turn') if isinstance(payload.get('turn'), str) else ''
+        with self.lock:
+            turn = self._turn(turn_id) if turn_id and TURN_ID.fullmatch(turn_id) else None
+            source = 'router sidecar'
+            if turn is None:
+                turn = self._match_time(now)
+                source = 'router sidecar (matched by time)'
+            if turn is None:
+                return False
+            self._merge_obs(turn, raw, source)
+            self.seq += 1
+            turn.seq = self.seq
+            self.events += 1
+            self.last_event = now
+        return True
+
+    def ingest_log(self, rows):
+        """Apply router-log rows. Every attached row is labelled matched by time."""
+        if not rows:
+            return 0
+        applied = 0
+        with self.lock:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                when = row.get('time')
+                if isinstance(when, bool) or not isinstance(when, (int, float)):
+                    continue
+                turn = None
+                turn_id = row.get('turn') if isinstance(row.get('turn'), str) else ''
+                if turn_id and TURN_ID.fullmatch(turn_id):
+                    turn = self._turn(turn_id)
+                if turn is None:
+                    turn = self._match_time(when)
+                if turn is None:
+                    continue
+                before = turn.observatory_source
+                self._merge_obs(turn, row.get('observatory'), 'router log (matched by time)')
+                if turn.observatory_source != before or before is None and turn.observatory:
+                    applied += 1
+        return applied
+
+    def _recent(self):
+        rows = []
+        for item in self.turns:
+            label, _rest = split_label(item.reply, self.route_label)
+            rows.append({'id': item.id, 'route': classify_route(label, self.local_prefix)})
+        return rows
+
     def snapshot(self, include_text=False, tokenize=None, placement=None, since=None):
         now = self.clock()
         with self.lock:
             self._expire(now)
             status = {'listening': self.listening, 'error': self.listen_error, 'events': self.events,
                       'last_event_age': round(now - self.last_event, 1) if self.last_event else None}
+            recent = self._recent()
             if since is not None and since == self.seq and self.turns and self.turns[-1].ended:
-                return {'seq': self.seq, 'unchanged': True, 'tap': status}
+                return {'seq': self.seq, 'unchanged': True, 'tap': status, 'recent': recent}
             turn = self.turns[-1] if self.turns else None
             if turn is None:
-                return {'seq': self.seq, 'state': 'idle', 'tap': status, 'turn': None}
+                return {'seq': self.seq, 'state': 'idle', 'tap': status, 'turn': None, 'recent': recent}
             data = {key: getattr(turn, key) for key in ('id', 'model', 'started', 'first', 'last', 'ended', 'prompt', 'context', 'messages', 'reply')}
+            data['observatory'] = turn.observatory
+            data['observatory_source'] = turn.observatory_source
+            data['builtins'] = dict(turn.builtins)
+            data['connection'] = turn.connection
+            data['tasks'] = [dict(item) for item in turn.tasks]
+            data['owui_tools'] = [dict(item) for item in turn.owui_tools]
+            data['usage'] = dict(turn.usage)
+            data['sources'] = turn.sources
         route_label, reply = split_label(data['reply'], self.route_label)
         reply = reply[:MAX_REPLY_CHARS]
-        if route_label and route_label.lower().startswith(self.local_prefix):
-            route = 'local'
+        decision = (data['observatory'] or {}).get('decision') or {}
+        if decision.get('target') in ('local', 'external', 'direct'):
+            route = decision['target']
+            route_source = data['observatory_source'] or 'router stream'
         elif route_label:
-            route = 'external'
+            route = classify_route(route_label, self.local_prefix)
+            route_source = 'live tap'
+        elif data['connection'] in ('local', 'external'):
+            route = data['connection']
+            route_source = 'Open WebUI'
         else:
             route = 'direct'
+            route_source = None
         model = self.local_model if route == 'local' and self.local_model else data['model']
         quiet = data['first'] and not data['ended'] and data['last'] and now - data['last'] > 8
         state = 'done' if (data['ended'] or quiet) else ('streaming' if data['first'] else 'waiting')
         if quiet:
             data['ended'] = data['last']
+        shown = data['observatory']
+        if shown and not include_text:
+            shown = observatory_v1.strip_reason_text(shown)
         out = {'seq': self.seq, 'tap': status, 'state': state, 'route': route, 'route_label': route_label,
+               'route_source': route_source, 'observatory': shown, 'observatory_source': data['observatory_source'],
+               'builtins': data['builtins'], 'connection': data['connection'],
+               'tasks': [{'name': item['name'], 'at_seconds': round(item['at'] - data['started'], 3)} for item in data['tasks']],
+               'owui_tools': [{'name': item['name'],
+                               'start_seconds': round(item['start'] - data['started'], 3) if item.get('start') else None,
+                               'end_seconds': round(item['end'] - data['started'], 3) if item.get('end') else None}
+                              for item in data['owui_tools']],
+               'usage': data['usage'], 'sources': data['sources'], 'recent': recent,
                'openwebui_model': data['model'], 'model': model, 'messages': data['messages'],
                'started_ago': round(now - data['started'], 2),
                'first_token_seconds': round(data['first'] - data['started'], 3) if data['first'] else None,
@@ -293,7 +538,7 @@ class TapHandler(BaseHTTPRequestHandler):
         given = self.headers.get('Authorization', '')
         if not token or not hmac.compare_digest(given.encode(), ('Bearer ' + token).encode()):
             return self._done(401)
-        if self.path != '/live/events' or not str(self.headers.get('Content-Type', '')).startswith('application/json') \
+        if self.path not in ('/live/events', '/live/route') or not str(self.headers.get('Content-Type', '')).startswith('application/json') \
                 or self.headers.get('Transfer-Encoding'):
             return self._done(400)
         try:
@@ -306,7 +551,12 @@ class TapHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length).decode('utf-8'))
         except (ValueError, UnicodeDecodeError):
             return self._done(400)
-        self.hub.accept(body.get('events') if isinstance(body, dict) else None)
+        if not isinstance(body, dict):
+            return self._done(400)
+        if self.path == '/live/route':
+            self.hub.accept_route(body)
+        else:
+            self.hub.accept(body.get('events'))
         return self._done(204)
 
 
@@ -362,6 +612,10 @@ def live_response(query, hub=None):
     """JSON body for GET /api/live?text=0|1&since=N."""
     from tokenize_api import tokenize
     hub = hub or HUB
+    try:
+        hub.ingest_log(route_log.read_route_log(getattr(hub, 'route_log', None)))
+    except Exception:
+        pass
     include = query.get('text', ['0'])[0] == '1'
     since = query.get('since', [''])[0]
     since = int(since) if str(since).isdigit() else None
@@ -370,7 +624,9 @@ def live_response(query, hub=None):
 
 def apply_config(cfg, hub=None):
     live = (cfg or {}).get('live_tap') or {}
-    (hub or HUB).configure(live.get('route_label_pattern'), live.get('local_label_prefix') or 'local', live.get('local_model') or '')
+    target = hub or HUB
+    target.configure(live.get('route_label_pattern'), live.get('local_label_prefix') or 'local', live.get('local_model') or '')
+    target.route_log = (cfg or {}).get('route_log') or {}
 
 
 if __name__ == '__main__':

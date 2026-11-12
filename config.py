@@ -38,6 +38,12 @@ DEFAULTS = {
         'local_providers': ['ollama', 'local'],
         'external_providers': ['openai', 'anthropic', 'google', 'openrouter', 'groq'],
     },
+    'route_log': {
+        'path': '',
+        'format': 'jsonl',
+        'module': '',
+    },
+    'reason_labels': {},
 }
 
 
@@ -150,6 +156,13 @@ def load_config(environ=None, root=None):
         glance['format'] = env['OBSERVATORY_GLANCE_FORMAT']
     if env.get('OBSERVATORY_GLANCE_MODULE'):
         glance['module'] = env['OBSERVATORY_GLANCE_MODULE']
+    route_log = data['route_log']
+    if env.get('OBSERVATORY_ROUTE_LOG'):
+        route_log['path'] = env['OBSERVATORY_ROUTE_LOG']
+    if env.get('OBSERVATORY_ROUTE_LOG_FORMAT'):
+        route_log['format'] = env['OBSERVATORY_ROUTE_LOG_FORMAT']
+    if env.get('OBSERVATORY_ROUTE_LOG_MODULE'):
+        route_log['module'] = env['OBSERVATORY_ROUTE_LOG_MODULE']
     return normalize(data)
 
 
@@ -216,6 +229,21 @@ def normalize(data):
         'local_providers': _providers(glance.get('local_providers'), DEFAULTS['glance']['local_providers']),
         'external_providers': _providers(glance.get('external_providers'), DEFAULTS['glance']['external_providers']),
     })
+    route_log = data['route_log']
+    fmt = route_log.get('format') if route_log.get('format') in ('jsonl', 'module') else 'jsonl'
+    route_log.update({
+        'path': _header_value(route_log.get('path', ''), 400),
+        'format': fmt,
+        'module': _header_value(route_log.get('module', ''), 200),
+    })
+    labels = {}
+    raw_labels = data.get('reason_labels') if isinstance(data.get('reason_labels'), dict) else {}
+    for key, value in list(raw_labels.items())[:40]:
+        code = key.strip().lower() if isinstance(key, str) else ''
+        text = value.strip() if isinstance(value, str) else ''
+        if code and len(code) <= 32 and text and len(text) <= 40 and all(ch == '_' or ch.isalnum() for ch in code):
+            labels[code] = ' '.join(text.split())
+    data['reason_labels'] = labels
     return data
 
 
