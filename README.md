@@ -2,7 +2,7 @@
 
 Version 0.2.0 — standalone community evaluation package.
 
-A local-first dashboard for people experimenting with local LLMs. No Hermes installation, SSH server, Tailscale account, or cloud subscription is required.
+A local-first dashboard for people experimenting with local LLMs. No agent framework, SSH server, Tailscale account, or cloud subscription is required.
 
 ## Features
 

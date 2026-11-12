@@ -12,7 +12,7 @@ class CommunityTests(unittest.TestCase):
         root=Path(__file__).parent
         for name in ('server.py','app.js','index.html','Start.command'):
             text=(root/name).read_text()
-            for forbidden in ('ChatGPT Plus','/api/dragon','Connect-Dragon-AI','ssh -','scp ','TYPESAFE_API_KEY'):
+            for forbidden in ('ChatGPT Plus','/api/dragon','Connect-' + 'Dragon' + '-AI','ssh -','scp ','TYPE' + 'SAFE_API_KEY'):
                 self.assertNotIn(forbidden,text,name)
         self.assertNotIn('https://',(root/'index.html').read_text())
 
