@@ -59,7 +59,11 @@ function routeTiming(turn){
 }
 
 function routeReasonText(turn){
-  if(!turn || typeof turn.route_reason!=='string') return null;
+  if(!turn) return null;
+  var decision = turn.observatory && turn.observatory.decision;
+  var code = decision && decision.reason && typeof decision.reason.code==='string' ? decision.reason.code : '';
+  if(code) return code;
+  if(typeof turn.route_reason!=='string') return null;
   var text = turn.route_reason.replace(/\s+/g,' ').trim();
   return text ? text.slice(0,120) : null;
 }
@@ -84,9 +88,12 @@ function routePhaseOf(turn){
 
 function routeStats(turn){
   var timing = routeTiming(turn||{});
+  var decision = turn && turn.observatory && turn.observatory.decision || {};
   var reply = turn && turn.reply;
   var tokens = reply && routeFinite(reply.count)!==null ? reply.count : null;
   var reason = routeReasonText(turn);
+  var left = routeFinite(decision.upstream_ms)!==null ? decision.upstream_ms/1000 : timing.left_network_seconds;
+  var routeTime = routeFinite(decision.decide_ms)!==null ? decision.decide_ms/1000 : timing.route_seconds;
   return [
     {key:'first_token', label:'First token', value:routeFormat(turn && turn.first_token_seconds, 3, ' s')},
     {key:'stream', label:'Streaming', value:routeFormat(turn && turn.stream_seconds, 3, ' s')},
@@ -94,8 +101,8 @@ function routeStats(turn){
     {key:'rate', label:'tok/s', value:routeFormat(turn && turn.tokens_per_second, 2, '')},
     {key:'tokens', label:'Tokens', value:routeFormat(tokens, 0, '')},
     {key:'route_reason', label:'Route reason', value:reason || ROUTE_NOT_REPORTED},
-    {key:'left_network', label:'Left network', value:routeFormat(timing.left_network_seconds, 3, ' s')},
-    {key:'route_time', label:'Route time', value:routeFormat(timing.route_seconds, 3, ' s')}
+    {key:'left_network', label:'Left network', value:routeFormat(left, 3, ' s')},
+    {key:'route_time', label:'Route time', value:routeFormat(routeTime, 3, ' s')}
   ];
 }
 
@@ -198,8 +205,25 @@ function routeMapFrame(turn){
     layout:layout,
     stats:routeStats(phase==='idle' ? null : turn),
     prompt:phase==='idle' ? null : routePromptText(turn),
-    routeReason:phase==='idle' ? null : routeReasonText(turn)
+    routeReason:phase==='idle' ? null : routeReasonText(turn),
+    extras:phase==='idle' ? [] : routeExtras(turn)
   };
+}
+
+function routeExtras(turn){
+  var obs = turn && turn.observatory || {};
+  var steps = Array.isArray(obs.steps) ? obs.steps : [];
+  var out = [];
+  if(obs.decision) out.push({id:'router', title:'Router', tone:turn.route==='external'?'external':turn.route==='local'?'local':'common'});
+  if(obs.classifier){
+    var skipped = obs.classifier.result==='skipped';
+    var failed = obs.classifier.result==='error';
+    out.push({id:'classifier', title:'Classifier', tone:failed?'error':skipped?'common':'common', detail:skipped?'skipped':(obs.classifier.result||'')});
+  }
+  if(steps.some(function(step){return step.kind==='agent';})) out.push({id:'agent', title:'Agent', tone:steps.some(function(step){return step.kind==='agent'&&step.status==='error';})?'error':'common'});
+  if(steps.some(function(step){return step.kind==='tool';}) || (turn.owui_tools||[]).length) out.push({id:'tools', title:'Tools', tone:steps.some(function(step){return step.kind==='tool'&&step.status==='error';})?'error':'common'});
+  if(steps.some(function(step){return step.kind==='mcp';})) out.push({id:'mcp', title:'MCP', tone:steps.some(function(step){return step.kind==='mcp'&&step.status==='error';})?'error':'common'});
+  return out;
 }
 
 function routeMapMotion(frame, reduced){
@@ -304,6 +328,18 @@ function routeExampleScript(){
     {t:0, turn:{example:true, id:'example', state:'waiting', route:'direct', elapsed_seconds:0.05, text_included:true, prompt:prompt}},
     {t:1000, turn:{example:true, id:'example', state:'waiting', route:'external', elapsed_seconds:0.40, text_included:true, prompt:prompt}},
     {t:2200, turn:{example:true, id:'example', state:'streaming', route:'external', elapsed_seconds:1.10, first_token_seconds:0.70, stream_seconds:0.40, text_included:true, prompt:prompt, reply:{}}},
-    {t:4200, turn:{example:true, id:'example', state:'done', route:'external', elapsed_seconds:2.40, first_token_seconds:0.70, stream_seconds:1.70, tokens_per_second:18.4, text_included:true, prompt:{text:'Example prompt', count:3}, reply:{count:32}}}
+    {t:4200, turn:{example:true, id:'example', state:'done', route:'external', route_source:'router stream', elapsed_seconds:2.40, first_token_seconds:0.70, stream_seconds:1.70, tokens_per_second:18.4, text_included:true, prompt:{text:'Example prompt', count:3}, reply:{count:32},
+      observatory_source:'router stream',
+      observatory:{v:1,
+        decision:{target:'external', label:'External · example', reason:{code:'policy_match', text:'Example reason'}, decide_ms:12, upstream_ms:40},
+        classifier:{result:'external', why:'needs_tools', ms:18, flags:['tools']},
+        steps:[
+          {id:'agent', kind:'agent', name:'planner', status:'ok', start_ms:20, end_ms:80},
+          {id:'llm1', kind:'llm', name:'example-a', where:'external', status:'ok', start_ms:90, end_ms:400, out_tokens:12},
+          {id:'llm2', kind:'llm', name:'example-b', where:'external', status:'ok', start_ms:420, end_ms:900, out_tokens:20},
+          {id:'tool1', kind:'tool', name:'lookup', status:'ok', start_ms:910, end_ms:1100},
+          {id:'mcp1', kind:'mcp', name:'search', server:'notes', status:'ok', start_ms:1120, end_ms:1400},
+          {id:'tool2', kind:'tool', name:'write', status:'error', start_ms:1420, end_ms:1500}
+        ]}}}
   ];
 }

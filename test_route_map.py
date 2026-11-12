@@ -245,9 +245,11 @@ class ParseTests(unittest.TestCase):
         self.assertIn('## Route map (0.3.0)', readme)
         self.assertIn('Example data shown', readme)
         self.assertIn('screenshots/route-map-example.png', readme)
-        self.assertIn("route_reason", readme)
-        self.assertIn('left_network_seconds', readme)
+        self.assertIn('screenshots/route-map-example-light.png', readme)
+        self.assertIn('observatory/v1', readme)
+        self.assertIn('PLAYBACK OF A RECORDED TURN', readme)
         self.assertTrue((ROOT / 'screenshots' / 'route-map-example.png').is_file())
+        self.assertTrue((ROOT / 'screenshots' / 'route-map-example-light.png').is_file())
 
 
 if __name__ == '__main__':

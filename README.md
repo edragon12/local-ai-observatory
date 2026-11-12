@@ -87,29 +87,31 @@ With the launcher environment initialized:
 .venv/bin/python3 -m unittest -v
 ```
 
-Optional JavaScript checks with Node.js: `node --check app.js`, `node --check route_map.js`, `node test_features.js`, and `node test_route_map.js`.
+Optional JavaScript checks with Node.js: `node --check app.js`, `node --check route_map.js`, `node --check trace_helpers.js`, `node test_features.js`, `node test_route_map.js`, and `node test_trace.js`.
 
 ## Route map (0.3.0)
 
-Optional. The panel stays hidden until the live view is configured: a live-tap token file on this computer, or a remote live view that is listening. It draws each turn that live view already receives. Nothing in this section turns the receiver on, and no router ships with it.
+Optional. The panel stays hidden until the live view is configured: a live-tap token file on this computer, or a remote live view that is listening. It draws each turn that live view already receives. With only Open WebUI and Ollama that is the prompt, the model connection, and the reply. A router, a classifier, and later steps appear only when something reports them. Nothing here turns the receiver on, and no router ships with it.
 
-The path is your prompt in the chat UI, then the live view, then the route. A local route is teal and ends at Local model (Ollama on this machine). An external route is amber, crosses a Leaves your network zone, and continues to External model and Internet. The reply travels back along the path that was taken. The other path stays dim.
+The path is the chat UI, then the live view, then either a local model (teal, on this machine) or an external model (amber, through a Leaves your network zone). Router, classifier, agent, tool, and MCP nodes are drawn only after a turn has reported them. Paths that were not taken stay dim. The hop trace under the map is one row per reported hop, and each row names its source. Anything that could have been reported and was not is a single line, "Not reported by this setup".
 
-The pulse moves only while that stage is actually happening: waiting, the first token (streaming starts), streaming, and done. Timings already reported by the live view are shown beside the map: first token, streaming time, total, tok/s, and tokens. A route that was not classified stays unlabeled. Anything the events do not include is shown as "not reported". The map does not invent a route, a host, or a duration.
+The pulse moves only while that stage is actually happening: waiting, the first token (streaming starts), streaming, and done. Play this turn replays the timings already on screen. It is click-only, makes no request, and is labelled PLAYBACK OF A RECORDED TURN. Past eight seconds it speeds up and says so. `prefers-reduced-motion` snaps the marker to the end.
 
-A proxy you run yourself may add two optional fields on a live event. `route_reason` is short text. `timing` may include `route_seconds` and `left_network_seconds` (seconds from the start of the turn). `left_network_seconds` is the only value that moves the pulse across the zone, and only once elapsed time has passed it. If a field is absent, the map says "not reported".
+A router you run yourself can send an `observatory/v1` object on a response chunk, POST it to the receiver's `/live/route`, or append it to a JSON-lines file named in `route_log.path`. The contract is [docs/route-events.md](docs/route-events.md). The chat request is not a delivery path. Unknown fields are dropped. Reason text is hidden when text is off and in Post mode.
 
-Post mode hides the prompt text and the "on this machine" label. The path, the teal and amber colors, and the timings stay. The animation follows `prefers-reduced-motion`: the marker sits at the end of the active stage instead of traveling.
+Post mode hides the prompt text, the "on this machine" label, and tool and MCP names. Path, colours, timings, and counts stay. "Show tool names in Post mode" is off until you turn it on.
 
 Replay example plays a scripted turn. While it is on screen the map is labeled EXAMPLE · FAKE DATA, and that turn is not added to the recent-turn dots.
 
-![Route map on the labeled example, external path in amber and the local path dim. Example data shown.](screenshots/route-map-example.png)
+![Route map and hop trace on the labeled example, dark theme. Example data shown.](screenshots/route-map-example.png)
 
-Example data shown. The figure is the replay, not a captured chat.
+![Route map and hop trace on the labeled example, light theme. Example data shown.](screenshots/route-map-example-light.png)
+
+Example data shown. The figures are the replay, not a captured chat.
 
 ### Changelog
 
-- 0.3.0 — Optional route map for the live view. No new packages.
+- 0.3.0 — Optional route map and hop trace for the live view. No new packages.
 
 ## Distribution status
 

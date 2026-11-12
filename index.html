@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local AI Observatory</title><link rel="stylesheet" href="/style.css"><script src="/route_map.js" defer></script><script src="/app.js" defer></script></head><body><main>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local AI Observatory</title><link rel="stylesheet" href="/style.css"><script src="/trace_helpers.js" defer></script><script src="/route_map.js" defer></script><script src="/app.js" defer></script></head><body><main>
 <header><div><span class="tag">LOCAL AI OBSERVATORY · 0.3.0</span> <span id="post-pill" class="post-pill" hidden>POST MODE · host details hidden</span><h1>Your AI, in view.</h1><p>Your machine. Your models. No account required.</p></div><div class="header-actions"><button id="post-mode" type="button" aria-pressed="false" title="Hides host labels, connection notes, keep-alive timers and prompt text so a screenshot stays generic. Local versus external counts stay visible.">Post mode: Off</button><button id="theme" type="button" aria-label="Switch color theme">Light theme</button></div></header>
 <nav aria-label="Monitored machine"><div class="nav-tabs"><div class="nav-switch"><button id="local-tab" type="button" aria-pressed="true" aria-controls="local-view">This computer</button><button id="remote-tab" type="button" aria-pressed="false" aria-controls="remote-view" hidden>Remote host</button></div><span id="host-label" class="private">On this computer · loopback only</span></div>
 <div id="glance" class="glance" aria-label="Local versus external LLM calls"><div id="routing-strip" class="glance-group"><span class="glance-kicker"><strong>Local vs external</strong> <span class="tag" title="Optional log you configure. Not a lifetime total. Local share is local ÷ (local + external).">RECORDED</span><span id="glance-window" class="glance-caption">No log source configured</span></span><div id="glance-tiles" class="glance-tiles"></div></div></div></nav>
@@ -13,9 +13,12 @@
 <div class="lv-bar"><span data-role="lv-state"></span> <span class="lv-model" data-role="lv-model"></span> <span data-role="lv-route"></span> <span data-role="lv-place"></span><label class="lv-show" title="Show the prompt and reply text. Post mode always hides it."><input type="checkbox" data-role="lv-show-text" checked> <span>Show prompt &amp; reply text</span></label></div>
 <p class="note" data-role="lv-status" role="status"></p>
 <section class="route-map" data-role="route-map" hidden>
-<div class="heading"><h3 class="subhead">Route map</h3><span class="tag route-example" data-role="route-example" hidden>EXAMPLE · FAKE DATA</span><button type="button" data-role="route-replay">Replay example</button></div>
+<div class="heading"><h3 class="subhead">Route map</h3><span class="tag route-example" data-role="route-example" hidden>EXAMPLE · FAKE DATA</span><span class="tag route-playback" data-role="route-playback" hidden>PLAYBACK OF A RECORDED TURN</span><button type="button" data-role="route-play">Play this turn</button><button type="button" data-role="route-replay">Replay example</button><label class="route-names"><input type="checkbox" data-role="route-tool-names"> Show tool names in Post mode</label></div>
 <p class="note" data-role="route-caption">No turn yet. The map fills in when a chat turn reaches the live view.</p>
 <div class="route-canvas" data-role="route-canvas"></div>
+<div class="route-trace" data-role="route-trace" aria-label="Hop trace"></div>
+<p class="note route-missing" data-role="route-missing"></p>
+<div class="route-untimed" data-role="route-untimed"></div>
 <div class="route-stats" data-role="route-stats"></div>
 <div class="route-history" data-role="route-history" aria-label="Recent turns"></div>
 </section>

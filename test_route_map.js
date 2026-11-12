@@ -121,7 +121,9 @@ ok('history keeps real turns and refuses the example', () => {
   assert.equal(example[0].turn.route_reason, undefined);
   assert.equal(run('routeMapFrame(routeExampleScript()[0].turn).stats').find(item => item.key === 'tokens').value, 'not reported');
   assert.equal(run('routeMapFrame(routeExampleScript()[3].turn).stats').find(item => item.key === 'tokens').value, '32');
-  assert.equal(run('routeMapFrame(routeExampleScript()[3].turn).stats').find(item => item.key === 'route_reason').value, 'not reported');
+  assert.equal(run('routeMapFrame(routeExampleScript()[3].turn).stats').find(item => item.key === 'route_reason').value, 'policy_match');
+  assert.ok(run('routeMapFrame(routeExampleScript()[3].turn).extras').some(item => item.id === 'router'));
+  assert.equal(run('routeMapFrame({state:"done", route:"local"}).extras').length, 0);
   const kept = run('applyRouteHistory([{id:"a", route:"local"}], {example:true, id:"example", state:"done", route:"external", recent:[{id:"example", route:"external"}]}, true)');
   assert.deepEqual(kept, [{id:'a', route:'local'}]);
   const blocked = run('rememberRouteTurn([{id:"a", route:"local"}], routeExampleScript()[3].turn, false)');

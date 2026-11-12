@@ -103,6 +103,7 @@ nav{flex-wrap:wrap;align-items:flex-start;gap:12px 16px}
 :root[data-theme=light]{--route-amber:#9a5b00;--route-zone:rgba(154,91,0,.07)}
 .route-map{background:none;border:0;border-top:1px solid var(--line);border-radius:0;padding:14px 0 2px;margin:12px 0 4px}
 .route-map .heading{flex-wrap:wrap;gap:8px;align-items:center}
+.route-names{flex-basis:100%}
 .route-map .subhead{margin-right:auto}
 .route-example{display:inline-block;background:var(--route-amber);color:#1a1204;border-radius:999px;letter-spacing:1.1px;padding:4px 9px}
 :root[data-theme=light] .route-example{color:#fff}
@@ -140,4 +141,23 @@ nav{flex-wrap:wrap;align-items:flex-start;gap:12px 16px}
 .route-dot.local{background:var(--accent)}
 .route-dot.external{background:var(--route-amber)}
 @media (prefers-reduced-motion:reduce){.route-pulse{animation:none}}
+.route-node.extra.error rect,.trace-row.is-error .trace-bar span{stroke:#d4534a;background:#d4534a}
+.route-node.error rect{stroke:#d4534a}
+.route-names{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.route-playback{display:inline-block;background:var(--ink);color:var(--bg);border-radius:999px;letter-spacing:.8px;padding:4px 9px}
+.route-trace{display:grid;gap:6px;margin-top:8px}
+.trace-row{display:grid;grid-template-columns:4.2rem minmax(0,1.3fr) minmax(48px,.7fr) 7.4rem;gap:8px;align-items:center;font-size:12px}
+.trace-row>span{color:var(--muted);font-size:10px;letter-spacing:.6px;font-weight:650}
+.trace-row strong{font-weight:650}
+.trace-row small{display:block;color:var(--muted)}
+.trace-row em{font-style:normal;color:var(--muted);font-size:10px;white-space:nowrap}
+.trace-bar{display:block;height:8px;border-radius:999px;background:var(--track);position:relative;overflow:hidden}
+.trace-bar span{display:block;height:100%;background:var(--accent);border-radius:999px}
+.trace-row.is-error .trace-bar span{background:#d4534a}
+.trace-row.is-skipped .trace-bar span{background:var(--muted)}
+.trace-row.is-on{outline:1px solid var(--line);border-radius:6px}
+.route-missing{margin:6px 0}
+.route-untimed{display:flex;flex-wrap:wrap;gap:6px}
+.trace-fact{font-size:11px;color:var(--muted);background:var(--raised);border-radius:999px;padding:3px 8px}
+@media(max-width:700px){.trace-row{grid-template-columns:4.2rem minmax(0,1fr)}.trace-row em,.trace-bar{grid-column:2}}
 @media(max-width:900px){.route-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}

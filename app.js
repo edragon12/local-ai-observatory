@@ -466,7 +466,8 @@ function paintRoute(v){
   const frame=routeMapFrame(source?source.turn:null);
   v.q('route-example').hidden=!example;
   const ns='http://www.w3.org/2000/svg',layout=frame.layout,svg=document.createElementNS(ns,'svg');
-  svg.setAttribute('viewBox','0 0 '+layout.width+' '+layout.height);svg.setAttribute('role','img');svg.setAttribute('aria-label',routeMapLabel(frame,postMode));
+  const extraH=frame.extras&&frame.extras.length?78:0;
+  svg.setAttribute('viewBox','0 0 '+layout.width+' '+(layout.height+extraH));svg.setAttribute('role','img');svg.setAttribute('aria-label',routeMapLabel(frame,postMode));
   const zone=layout.zone,z=document.createElementNS(ns,'rect');
   z.setAttribute('x',zone.x);z.setAttribute('y',zone.y);z.setAttribute('width',zone.w);z.setAttribute('height',zone.h);z.setAttribute('rx','12');z.setAttribute('class','route-zone '+frame.zone);svg.append(z);
   const zt=document.createElementNS(ns,'text');zt.setAttribute('x',zone.x+14);zt.setAttribute('y',zone.y+22);zt.setAttribute('class','zone-label');zt.textContent=zone.title;svg.append(zt);
@@ -481,6 +482,12 @@ function paintRoute(v){
     if(node.slot==='prompt'&&routePromptVisible(frame,postMode)){const sub=document.createElementNS(ns,'text');sub.setAttribute('x',node.x+card.w/2);sub.setAttribute('y',node.y+card.h+16);sub.setAttribute('text-anchor','middle');sub.setAttribute('class','node-sub private');const text=frame.prompt.length>32?frame.prompt.slice(0,31)+'…':frame.prompt;sub.textContent=text;g.append(sub);}
     svg.append(g);
   }
+  (frame.extras||[]).forEach((item,i)=>{
+    const x=18+i*156,y=layout.height+12,g=document.createElementNS(ns,'g');g.setAttribute('class','route-node extra '+item.tone);
+    const rect=document.createElementNS(ns,'rect');rect.setAttribute('x',x);rect.setAttribute('y',y);rect.setAttribute('width',144);rect.setAttribute('height',40);rect.setAttribute('rx',10);g.append(rect);
+    const title=document.createElementNS(ns,'text');title.setAttribute('x',x+72);title.setAttribute('y',y+25);title.setAttribute('text-anchor','middle');title.setAttribute('class','node-title');title.textContent=item.title+(item.detail?' · '+item.detail:'');g.append(title);
+    svg.append(g);
+  });
   if(frame.pulseTravel.length){
     const motion=routeMapMotion(frame,routeReduced());
     const at=routePulsePosition(frame,motion.animate?0:1);
@@ -489,8 +496,62 @@ function paintRoute(v){
   box.replaceChildren(svg);
   v.q('route-stats').replaceChildren(...frame.stats.map(s=>{const c=el('div');c.className='route-stat';c.append(el('span',s.label),el('strong',s.value));return c;}));
   v.q('route-caption').textContent=example?'Scripted path only. It is left out of Recent.':frame.phase==='idle'?'No turn yet. The map fills in when a chat turn reaches the live view.':'The pulse is on the stage this turn is in. A dim path was not taken.';
+  renderTrace(v,source?source.turn:null);
   renderRouteHistory(v.q('route-history'),v.routeHistory||[]);
   animateRoutePulse(v,frame);
+}
+function renderTrace(v,turn){
+  const trace=v.q('route-trace'),missing=v.q('route-missing'),side=v.q('route-untimed');
+  if(!trace||typeof traceView!=='function')return;
+  const view=traceView(turn,{post:postMode,showToolNames:!!v.showToolNames});
+  v.routeTrace=view;
+  const total=view.total||1;
+  trace.replaceChildren();
+  for(const row of view.rows){
+    const line=el('div');line.className='trace-row'+(row.status==='error'?' is-error':row.status==='skipped'?' is-skipped':'');
+    line.dataset.start=String(row.start==null?'':row.start);line.dataset.end=String(row.end==null?'':row.end);
+    line.append(el('span',row.lane));
+    const copy=el('div');copy.append(el('strong',row.label));
+    if(row.detail)copy.append(el('small',row.detail));
+    line.append(copy);
+    const bar=el('span');bar.className='trace-bar';const fill=el('span');
+    const start=typeof row.start==='number'?row.start:0,end=typeof row.end==='number'?row.end:start;
+    fill.style.marginLeft=(100*Math.max(0,start)/total)+'%';
+    fill.style.width=Math.max(end>start?100*(end-start)/total:0,1.2)+'%';
+    bar.append(fill);line.append(bar);
+    line.append(el('em',row.source));
+    trace.append(line);
+  }
+  if(missing)missing.textContent=view.missing;
+  if(side){side.replaceChildren();for(const item of view.untimed){const chip=el('span',item.label+' '+item.value+' · '+item.source);chip.className='trace-fact';side.append(chip);}}
+}
+function markTrace(v,t){
+  const rows=v.q('route-trace');if(!rows)return;
+  for(const line of rows.children){
+    const start=line.dataset.start===''?null:Number(line.dataset.start);
+    const on=start!==null&&t+0.0001>=start;
+    line.classList.toggle('is-on',on);
+  }
+}
+function playRecordedTurn(v){
+  if(!v.q('route-map')||v.q('route-map').hidden)return;
+  const turn=v.routeSource&&v.routeSource.turn;
+  if(!turn||!turn.state||turn.state==='idle'){v.q('route-caption').textContent='No recorded turn to play.';return;}
+  const view=v.routeTrace||traceView(turn,{post:postMode,showToolNames:!!v.showToolNames});
+  const plan=playbackPlan(view.total),reduced=routeReduced(),example=!!(v.routeSource&&v.routeSource.example);
+  if(v.routePlayRaf)cancelAnimationFrame(v.routePlayRaf);
+  v.routePlayback={plan,example};
+  const badge=v.q('route-playback');badge.hidden=false;
+  badge.textContent=(example?'EXAMPLE · FAKE DATA':'PLAYBACK OF A RECORDED TURN')+(plan.spedUp?' · sped up '+plan.speed.toFixed(1)+'×':'');
+  if(reduced){markTrace(v,playbackTime(plan,0,true));return;}
+  const started=performance.now();
+  const step=now=>{
+    if(!v.routePlayback)return;
+    const wall=(now-started)/1000,t=playbackTime(plan,wall,false);
+    markTrace(v,t);
+    if(wall<plan.playSeconds)v.routePlayRaf=requestAnimationFrame(step);
+  };
+  v.routePlayRaf=requestAnimationFrame(step);
 }
 function animateRoutePulse(v,frame){
   if(v.routeRaf)cancelAnimationFrame(v.routeRaf);v.routeRaf=0;
@@ -636,6 +697,8 @@ for(const v of Object.values(views)){
   v.part('live').addEventListener('toggle',()=>livePoll(v));
   v.q('lv-show-text').onchange=()=>{syncShowText(v);v.liveData=null;livePoll(v);};
   v.q('route-replay').onclick=()=>playRouteExample(v);
+  v.q('route-play').onclick=()=>playRecordedTurn(v);
+  v.q('route-tool-names').onchange=()=>{v.showToolNames=v.q('route-tool-names').checked;paintRoute(v);};
   syncShowText(v);
 }
 try{const saved=localStorage.getItem(TK_TEXT_KEY);if(saved!==null)for(const v of Object.values(views)){v.q('tk-input').value=saved;v.q('tk-remember').checked=true;}}catch{}
