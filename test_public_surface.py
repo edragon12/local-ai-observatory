@@ -16,8 +16,19 @@ NEEDLES = (
 
 
 def change_text():
-    """Diff against main, plus new files that are not in that diff yet."""
+    """Added lines against main, plus new untracked text files.
+
+    Context and deletions stay out of the scan. A one-line edit sits beside
+    sentences that already ship in this public tree, and those sentences are
+    not part of the change.
+    """
     diff = subprocess.check_output(['git', 'diff', '-U3', 'main', '--', '.'], cwd=ROOT, text=True)
+    added = []
+    for line in diff.splitlines():
+        if line.startswith('+++'):
+            continue
+        if line.startswith('+'):
+            added.append(line[1:])
     listed = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=ROOT, text=True)
     extra = []
     for name in listed.splitlines():
@@ -28,7 +39,7 @@ def change_text():
             extra.append(path.read_text(encoding='utf-8'))
         except UnicodeDecodeError:
             continue
-    return diff + '\n' + '\n'.join(extra)
+    return '\n'.join(added) + '\n' + '\n'.join(extra)
 
 
 class SurfaceTests(unittest.TestCase):
@@ -64,6 +75,21 @@ class SurfaceTests(unittest.TestCase):
         lowered = change_text().lower()
         for needle in NEEDLES:
             self.assertNotIn(needle, lowered, needle)
+
+    def test_readme_matches_version_and_shows_example_screenshots(self):
+        version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
+        readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+        self.assertEqual(readme.splitlines()[2], f'Version {version} — standalone community evaluation package.')
+        self.assertNotIn('0.1.0', readme)
+        features = readme.split('## Features', 1)[1].split('## ', 1)[0]
+        self.assertIn('](#version-020)', features)
+        for phrase in ('tok/s sparkline', 'FITS', 'SPILLS', 'CPU', 'nvidia-smi', 'Post mode', 'Prompt tokens'):
+            self.assertIn(phrase, features)
+        self.assertIn('Example data shown', readme)
+        for name in ('screenshots/dashboard-dark.png', 'screenshots/dashboard-light.png'):
+            self.assertIn(name, readme)
+            self.assertTrue((ROOT / name).is_file(), name)
+        self.assertNotIn('linux-results-', readme)
 
 
 if __name__ == '__main__':

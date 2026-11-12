@@ -1,6 +1,6 @@
 # Local AI Observatory
 
-Version 0.1.0-preview — standalone community evaluation package.
+Version 0.2.0 — standalone community evaluation package.
 
 A local-first dashboard for people experimenting with local LLMs. No Hermes installation, SSH server, Tailscale account, or cloud subscription is required.
 
@@ -12,6 +12,7 @@ A local-first dashboard for people experimenting with local LLMs. No Hermes inst
 - Explicit, user-triggered inference tests: generation tokens/second, first output, elapsed time, runtime load time and output tokens.
 - A visible comparison of the latest 20 dashboard tests, with a Copy results button. Input/output token totals cover those tests only.
 - Light and dark themes; no external fonts, analytics or images.
+- Optional [Version 0.2.0](#version-020) views, off until you configure them: a generation tok/s sparkline, memory-fit badges (FITS, SPILLS, or CPU), GPU power and temperature when `nvidia-smi` reports them, Post mode, and Prompt tokens.
 
 ## Quick start — macOS or Linux
 
@@ -60,9 +61,9 @@ Tests use a fixed prompt, up to 128 output tokens, a 4K context request and five
 
 Apple Silicon/macOS: unified-memory, pressure, swap and compressed-memory readings are implemented. This 0.2.0 change was not run on Apple hardware, so those paths are covered by unit tests of the parsers only. macOS metrics may be unavailable on some OS versions.
 
-Linux: basic CPU, RAM, storage and loopback Ollama paths have been exercised. macOS memory-pressure/compression readings remain unavailable. This preview does not collect NVIDIA/AMD GPU utilization.
+Linux: basic CPU, RAM, storage and loopback Ollama paths have been exercised. macOS memory-pressure/compression readings remain unavailable. GPU utilization, power, and temperature show up when the host reports them. See [Version 0.2.0](#version-020).
 
-Not included: Windows validation, MLX, model-fit estimation, remote-host management, Hermes logs, subscription/OAuth quotas, process ownership collector or all-runtime traffic/token monitoring. These can become optional integrations, but no personal account or server configuration ships here.
+Not included: Windows validation, MLX, subscription or OAuth quotas, a process-ownership collector, or monitoring of every runtime's traffic. Model fit, an optional second host, and the other additions are in [Version 0.2.0](#version-020). No personal account or server configuration ships here.
 
 ## Privacy and security
 
@@ -70,13 +71,13 @@ See PRIVACY.md. The server binds to loopback only. Do not change that binding or
 
 ## Screenshots
 
-Linux, after a local diagnostic probe:
+Dark and light themes of the 0.2.0 dashboard, with Post mode on. Example data shown. The machine cards, loaded models, completed probe, sparkline, and memory-fit badges are illustrative figures, not measurements. The local-versus-external strip and the Open WebUI panel are the real unconfigured states: no log is set, and the live receiver is off.
 
-![Linux dashboard in the dark theme, with a completed local test](screenshots/linux-results-dark.png)
+![Dark theme dashboard with Post mode on, an example completed probe, a tok/s sparkline, and FITS, SPILLS, and CPU memory-fit badges. Example data shown.](screenshots/dashboard-dark.png)
 
-![Linux dashboard in the light theme, with a completed local test](screenshots/linux-results-light.png)
+![Light theme dashboard with Post mode on, an example completed probe, a tok/s sparkline, and FITS, SPILLS, and CPU memory-fit badges. Example data shown.](screenshots/dashboard-light.png)
 
-No macOS screenshot is included. This change was not run on Apple hardware, and a capture from that machine is not in the repository. Do not treat the Linux screenshots above as a macOS result.
+No macOS screenshot is included. This change was not run on Apple hardware, and a capture from that machine is not in the repository. Do not treat the screenshots above as a macOS result.
 
 ## Tests
 
@@ -178,4 +179,4 @@ Personal host names, addresses, account names, home-directory paths, SSH keys, a
 
 Unit tests cover the GGUF metadata reader, prompt versus generation speeds, the NVIDIA text parser, glance counts, remote-host allowlisting (against a local fake server, including "no redirect"), live-tap timing (a label chunk does not start the clock), redaction when text is off, and the browser helpers in `test_features.js` with mock numbers.
 
-Not tested here: Apple hardware, a real GPU, Open WebUI with the filter installed inside it, or a second physical machine. The Linux screenshots in this repository are from the earlier preview, not from this optional UI. No new screenshot was added, because a useful one would need a running browser session and this pass did not produce a mock-only capture worth publishing.
+Not tested here: Apple hardware, a real GPU, Open WebUI with the filter installed inside it, or a second physical machine. The screenshots above use example data so the 0.2.0 layout can be shown without a running model. They are not measurements.
