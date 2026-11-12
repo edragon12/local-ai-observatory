@@ -10,6 +10,10 @@ is recorded as the route and is not the first generated token: the first-token
 clock starts on the first chunk that contains reply content after the label.
 Direct streams, with no label, still time the first chunk.
 
+A caller's own proxy may add route_reason (short text) and timing with
+route_seconds and left_network_seconds. Missing values stay null. This
+receiver does not invent them and does not include a router.
+
 GET /api/live returns text only when text=1. Otherwise it returns counts and
 per-token character lengths, not token ids.
 """
@@ -36,6 +40,8 @@ TURN_ID = re.compile(r'[A-Za-z0-9_-]{1,80}')
 MODEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,199}')
 DEFAULT_ROUTE_LABEL = re.compile(r'\A\*\*([^*\n]{1,80})\*\*\n\n')
 DEFAULT_NETS = ('127.0.0.0/8', '::1/128')
+TIMING_KEYS = ('route_seconds', 'left_network_seconds')
+MAX_TIMING = 86400.0
 
 
 def default_token_path(environ=None):
@@ -78,6 +84,50 @@ def compile_label(pattern):
     return compiled if compiled.groups >= 1 else DEFAULT_ROUTE_LABEL
 
 
+def clean_route_reason(value):
+    """Short text, or None. Whitespace is collapsed. Nothing is inferred."""
+    if not isinstance(value, str):
+        return None
+    text = ' '.join(value.split())
+    return text[:120] if text else None
+
+
+def clean_timing(value):
+    """Both known keys, null when absent or not a finite non-negative number."""
+    out = {key: None for key in TIMING_KEYS}
+    if not isinstance(value, dict):
+        return out
+    for key in TIMING_KEYS:
+        raw = value.get(key)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            continue
+        if raw != raw or raw < 0 or raw > MAX_TIMING:
+            continue
+        out[key] = round(float(raw), 3)
+    return out
+
+
+def merge_timing(current, incoming):
+    """Fill keys the new event actually reports. Invalid keys do not erase a prior value."""
+    base = clean_timing(current)
+    if not isinstance(incoming, dict):
+        return base
+    parsed = clean_timing(incoming)
+    for key in TIMING_KEYS:
+        if key in incoming and parsed[key] is not None:
+            base[key] = parsed[key]
+    return base
+
+
+def classify_route(label, local_prefix):
+    """local, external, or direct. A missing label is direct, not a guess."""
+    if label and str(label).lower().startswith((local_prefix or 'local').lower()):
+        return 'local'
+    if label:
+        return 'external'
+    return 'direct'
+
+
 def split_label(text, pattern):
     """Return (label or None, reply text without a leading label)."""
     if not text:
@@ -102,12 +152,15 @@ def networks(items):
 
 
 class Turn:
-    __slots__ = ('id', 'model', 'started', 'first', 'last', 'ended', 'prompt', 'context', 'messages', 'reply', 'seq')
+    __slots__ = ('id', 'model', 'started', 'first', 'last', 'ended', 'prompt', 'context', 'messages', 'reply', 'seq',
+                 'route_reason', 'timing')
 
     def __init__(self, turn_id, model, started):
         self.id, self.model, self.started = turn_id, model, started
         self.first = self.last = self.ended = None
         self.prompt, self.context, self.messages, self.reply, self.seq = '', '', 0, '', 0
+        self.route_reason = None
+        self.timing = {key: None for key in TIMING_KEYS}
 
 
 class LiveHub:
@@ -173,6 +226,7 @@ class LiveHub:
                     turn.ended = at
                 else:
                     continue
+                self._apply_route_meta(turn, event)
                 self.seq += 1
                 turn.seq = self.seq
                 applied += 1
@@ -182,32 +236,46 @@ class LiveHub:
             self._expire(now)
         return applied
 
+    def _apply_route_meta(self, turn, event):
+        if 'route_reason' in event:
+            reason = clean_route_reason(event.get('route_reason'))
+            if reason:
+                turn.route_reason = reason
+        if 'timing' in event and isinstance(event.get('timing'), dict):
+            turn.timing = merge_timing(turn.timing, event['timing'])
+
+    def _recent(self):
+        rows = []
+        for item in self.turns:
+            label, _rest = split_label(item.reply, self.route_label)
+            rows.append({'id': item.id, 'route': classify_route(label, self.local_prefix)})
+        return rows
+
     def snapshot(self, include_text=False, tokenize=None, placement=None, since=None):
         now = self.clock()
         with self.lock:
             self._expire(now)
             status = {'listening': self.listening, 'error': self.listen_error, 'events': self.events,
                       'last_event_age': round(now - self.last_event, 1) if self.last_event else None}
+            recent = self._recent()
             if since is not None and since == self.seq and self.turns and self.turns[-1].ended:
-                return {'seq': self.seq, 'unchanged': True, 'tap': status}
+                return {'seq': self.seq, 'unchanged': True, 'tap': status, 'recent': recent}
             turn = self.turns[-1] if self.turns else None
             if turn is None:
-                return {'seq': self.seq, 'state': 'idle', 'tap': status, 'turn': None}
+                return {'seq': self.seq, 'state': 'idle', 'tap': status, 'turn': None, 'recent': recent}
             data = {key: getattr(turn, key) for key in ('id', 'model', 'started', 'first', 'last', 'ended', 'prompt', 'context', 'messages', 'reply')}
+            data['route_reason'] = turn.route_reason
+            data['timing'] = dict(turn.timing)
         route_label, reply = split_label(data['reply'], self.route_label)
         reply = reply[:MAX_REPLY_CHARS]
-        if route_label and route_label.lower().startswith(self.local_prefix):
-            route = 'local'
-        elif route_label:
-            route = 'external'
-        else:
-            route = 'direct'
+        route = classify_route(route_label, self.local_prefix)
         model = self.local_model if route == 'local' and self.local_model else data['model']
         quiet = data['first'] and not data['ended'] and data['last'] and now - data['last'] > 8
         state = 'done' if (data['ended'] or quiet) else ('streaming' if data['first'] else 'waiting')
         if quiet:
             data['ended'] = data['last']
         out = {'seq': self.seq, 'tap': status, 'state': state, 'route': route, 'route_label': route_label,
+               'route_reason': data['route_reason'], 'timing': clean_timing(data['timing']), 'recent': recent,
                'openwebui_model': data['model'], 'model': model, 'messages': data['messages'],
                'started_ago': round(now - data['started'], 2),
                'first_token_seconds': round(data['first'] - data['started'], 3) if data['first'] else None,

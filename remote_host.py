@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+import live_tap
 import tokenize_api
 
 
@@ -225,6 +226,21 @@ def _live_part(part, include_text):
     return out
 
 
+def _recent_rows(data):
+    rows = []
+    for item in data.get('recent') or []:
+        if not isinstance(item, dict):
+            continue
+        ident = item.get('id')
+        if not isinstance(ident, str) or not live_tap.TURN_ID.fullmatch(ident):
+            continue
+        route = item.get('route') if item.get('route') in ('local', 'external', 'direct') else 'direct'
+        rows.append({'id': ident, 'route': route})
+        if len(rows) >= 8:
+            break
+    return rows
+
+
 def sanitize_live(data, include_text):
     if not isinstance(data, dict) or type(data.get('seq')) is not int:
         raise RemoteError(502, 'The remote dashboard returned an unreadable live view.')
@@ -233,7 +249,8 @@ def sanitize_live(data, include_text):
     out = {'seq': data['seq'], 'tap': {'listening': bool(tap.get('listening')),
                                        'events': tap.get('events') if type(tap.get('events')) is int else 0,
                                        'last_event_age': _num(tap.get('last_event_age')),
-                                       'error': None if tap.get('listening') else (error or 'not listening')}}
+                                       'error': None if tap.get('listening') else (error or 'not listening')},
+           'recent': _recent_rows(data)}
     if data.get('unchanged') is True:
         out['unchanged'] = True
         return out
@@ -245,6 +262,8 @@ def sanitize_live(data, include_text):
         return value if isinstance(value, str) and MODEL_NAME.fullmatch(value) else None
     out.update({'route': data.get('route') if data.get('route') in ('local', 'external', 'direct') else 'direct',
                 'route_label': data.get('route_label')[:80] if isinstance(data.get('route_label'), str) else None,
+                'route_reason': live_tap.clean_route_reason(data.get('route_reason')),
+                'timing': live_tap.clean_timing(data.get('timing')),
                 'model': model(data.get('model')), 'openwebui_model': model(data.get('openwebui_model')),
                 'tokenizer_model': model(data.get('tokenizer_model')),
                 'messages': data.get('messages') if type(data.get('messages')) is int else 0,

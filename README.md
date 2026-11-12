@@ -87,7 +87,29 @@ With the launcher environment initialized:
 .venv/bin/python3 -m unittest -v
 ```
 
-Optional JavaScript checks with Node.js: `node --check app.js` and `node test_features.js`.
+Optional JavaScript checks with Node.js: `node --check app.js`, `node --check route_map.js`, `node test_features.js`, and `node test_route_map.js`.
+
+## Route map (0.3.0)
+
+Optional. The panel stays hidden until the live view is configured: a live-tap token file on this computer, or a remote live view that is listening. It draws each turn that live view already receives. Nothing in this section turns the receiver on, and no router ships with it.
+
+The path is your prompt in the chat UI, then the live view, then the route. A local route is teal and ends at Local model (Ollama on this machine). An external route is amber, crosses a Leaves your network zone, and continues to External model and Internet. The reply travels back along the path that was taken. The other path stays dim.
+
+The pulse moves only while that stage is actually happening: waiting, the first token (streaming starts), streaming, and done. Timings already reported by the live view are shown beside the map: first token, streaming time, total, tok/s, and tokens. A route that was not classified stays unlabeled. Anything the events do not include is shown as "not reported". The map does not invent a route, a host, or a duration.
+
+A proxy you run yourself may add two optional fields on a live event. `route_reason` is short text. `timing` may include `route_seconds` and `left_network_seconds` (seconds from the start of the turn). `left_network_seconds` is the only value that moves the pulse across the zone, and only once elapsed time has passed it. If a field is absent, the map says "not reported".
+
+Post mode hides the prompt text and the "on this machine" label. The path, the teal and amber colors, and the timings stay. The animation follows `prefers-reduced-motion`: the marker sits at the end of the active stage instead of traveling.
+
+Replay example plays a scripted turn. While it is on screen the map is labeled EXAMPLE · FAKE DATA, and that turn is not added to the recent-turn dots.
+
+![Route map on the labeled example, external path in amber and the local path dim. Example data shown.](screenshots/route-map-example.png)
+
+Example data shown. The figure is the replay, not a captured chat.
+
+### Changelog
+
+- 0.3.0 — Optional route map for the live view. No new packages.
 
 ## Distribution status
 
@@ -97,7 +119,7 @@ The original project code is MIT licensed (see LICENSE). Third-party components 
 
 ## Version 0.2.0
 
-`VERSION` is 0.2.0. Optional features stay off until you configure them. Nothing in this package names a private machine, and copying `observatory.example.json` does not turn anything on.
+These options shipped in 0.2.0. Optional features stay off until you configure them. Nothing in this package names a private machine, and copying `observatory.example.json` does not turn anything on.
 
 Where an older paragraph says model-fit, a second host, or GPU readings are absent, this section is the current behavior.
 

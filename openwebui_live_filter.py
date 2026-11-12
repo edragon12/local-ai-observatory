@@ -1,7 +1,7 @@
 """
 title: Observatory Live Tap
 author: Local AI Observatory
-version: 0.2.0
+version: 0.3.0
 description: Sends each chat turn's text and streamed reply pieces to a Local AI Observatory receiver on a host you choose. Fails open: if the receiver is unreachable the chat is unchanged. Stores nothing.
 """
 # Open WebUI filter. Admin Panel -> Functions -> New Function -> paste this file -> Save.
@@ -30,6 +30,24 @@ def text_of(content):
     return ''
 
 
+def route_meta(body):
+    """Copy optional route_reason and timing when a caller attached them.
+
+    Unknown timing keys are dropped. Absent fields are omitted, not filled in.
+    """
+    if not isinstance(body, dict):
+        return {}
+    extra = {}
+    if isinstance(body.get('route_reason'), str):
+        extra['route_reason'] = body['route_reason']
+    timing = body.get('timing')
+    if isinstance(timing, dict):
+        kept = {key: timing[key] for key in ('route_seconds', 'left_network_seconds') if key in timing}
+        if kept:
+            extra['timing'] = kept
+    return extra
+
+
 def start_event(body, message_id, send_conversation=True):
     """Describe one chat turn. Returns None for Open WebUI task requests (titles, tags, follow-ups)."""
     if not isinstance(body, dict):
@@ -38,8 +56,10 @@ def start_event(body, message_id, send_conversation=True):
     prompt = next((text_of(row.get('content')) for row in reversed(messages) if row.get('role') == 'user'), '')
     context = '\n\n'.join(text_of(row.get('content')) for row in messages) if send_conversation else prompt
     turn = message_id if isinstance(message_id, str) and message_id else uuid.uuid4().hex
-    return {'type': 'start', 'turn': turn, 'model': str(body.get('model') or '')[:200],
-            'prompt': prompt[:20000], 'context': context[-20000:], 'messages': len(messages)}
+    event = {'type': 'start', 'turn': turn, 'model': str(body.get('model') or '')[:200],
+             'prompt': prompt[:20000], 'context': context[-20000:], 'messages': len(messages)}
+    event.update(route_meta(body))
+    return event
 
 
 def stream_events(event, message_id):
