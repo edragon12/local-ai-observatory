@@ -1,6 +1,6 @@
 # Local AI Observatory
 
-Version 0.2.0 — standalone community evaluation package.
+Version 0.3.0 — standalone community evaluation package.
 
 A local-first dashboard for people experimenting with local LLMs. No agent framework, SSH server, Tailscale account, or cloud subscription is required.
 

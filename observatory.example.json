@@ -23,5 +23,11 @@
     "module": "",
     "local_providers": ["ollama", "local"],
     "external_providers": ["openai", "anthropic", "google", "openrouter", "groq"]
-  }
+  },
+  "route_log": {
+    "path": "",
+    "format": "jsonl",
+    "module": ""
+  },
+  "reason_labels": {}
 }

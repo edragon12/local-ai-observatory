@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 import live_tap
+import observatory_v1
 import tokenize_api
 
 
@@ -260,10 +261,45 @@ def sanitize_live(data, include_text):
         return out
     def model(value):
         return value if isinstance(value, str) and MODEL_NAME.fullmatch(value) else None
+    observed = observatory_v1.sanitize_observatory(data.get('observatory'))
+    if observed and not include_text:
+        observed = observatory_v1.strip_reason_text(observed)
+    builtins = data.get('builtins') if isinstance(data.get('builtins'), dict) else {}
+    clean_builtins = {key: builtins.get(key) if isinstance(builtins.get(key), bool) else None
+                      for key in ('web_search', 'image_generation', 'code_interpreter', 'memory')}
+    for key in ('files', 'tool_ids'):
+        clean_builtins[key] = builtins.get(key) if type(builtins.get(key)) is int and builtins.get(key) >= 0 else None
+    tools = []
+    for item in data.get('owui_tools') or []:
+        if isinstance(item, dict) and isinstance(item.get('name'), str) and item['name'].strip():
+            tools.append({'name': item['name'].strip()[:80],
+                          'start_seconds': _num(item.get('start_seconds')),
+                          'end_seconds': _num(item.get('end_seconds'))})
+            if len(tools) >= 60:
+                break
+    tasks = []
+    for item in data.get('tasks') or []:
+        if isinstance(item, dict) and isinstance(item.get('name'), str) and item['name'].strip():
+            tasks.append({'name': item['name'].strip()[:40], 'at_seconds': _num(item.get('at_seconds'))})
+            if len(tasks) >= 20:
+                break
+    usage = {}
+    raw_usage = data.get('usage') if isinstance(data.get('usage'), dict) else {}
+    for key in ('load_ms', 'prompt_eval_ms', 'eval_ms', 'prompt_tokens', 'completion_tokens'):
+        number = _num(raw_usage.get(key))
+        if number is not None and number >= 0:
+            usage[key] = number
     out.update({'route': data.get('route') if data.get('route') in ('local', 'external', 'direct') else 'direct',
                 'route_label': data.get('route_label')[:80] if isinstance(data.get('route_label'), str) else None,
-                'route_reason': live_tap.clean_route_reason(data.get('route_reason')),
-                'timing': live_tap.clean_timing(data.get('timing')),
+                'route_source': data.get('route_source') if data.get('route_source') in ('live tap', 'Open WebUI') or observatory_v1.source_name(data.get('route_source')) else None,
+                'observatory': observed,
+                'observatory_source': observatory_v1.source_name(data.get('observatory_source')),
+                'builtins': clean_builtins,
+                'connection': data.get('connection') if data.get('connection') in ('local', 'external') else None,
+                'tasks': tasks,
+                'owui_tools': tools,
+                'usage': usage,
+                'sources': data.get('sources') if type(data.get('sources')) is int and data.get('sources') >= 0 else None,
                 'model': model(data.get('model')), 'openwebui_model': model(data.get('openwebui_model')),
                 'tokenizer_model': model(data.get('tokenizer_model')),
                 'messages': data.get('messages') if type(data.get('messages')) is int else 0,

@@ -169,9 +169,10 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(event['prompt'], 'Hello')
         self.assertEqual(event['turn'], 'abc')
         chunk = {'choices': [{'delta': {'content': 'Hi'}, 'finish_reason': None}]}
-        self.assertEqual(openwebui_live_filter.stream_events(chunk, 'abc'), [{'type': 'delta', 'turn': 'abc', 'text': 'Hi'}])
+        streamed = openwebui_live_filter.stream_events(chunk, 'abc')
+        self.assertIn({'type': 'delta', 'turn': 'abc', 'text': 'Hi'}, streamed)
         done = {'choices': [{'delta': {}, 'finish_reason': 'stop'}]}
-        self.assertEqual(openwebui_live_filter.stream_events(done, 'abc')[0]['type'], 'end')
+        self.assertEqual(openwebui_live_filter.stream_events(done, 'abc')[-1]['type'], 'end')
         source = Path(openwebui_live_filter.__file__).read_text(encoding='utf-8')
         self.assertIn("default=''", source)
         self.assertIn('return body', source)

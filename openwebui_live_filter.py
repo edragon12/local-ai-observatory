@@ -30,22 +30,114 @@ def text_of(content):
     return ''
 
 
-def route_meta(body):
-    """Copy optional route_reason and timing when a caller attached them.
+_DECISION_KEYS = ('target', 'label', 'decide_ms', 'upstream_ms')
+_REASON_KEYS = ('code', 'text')
+_CLASSIFIER_KEYS = ('result', 'why', 'ms', 'flags')
+_STEP_KEYS = ('id', 'kind', 'name', 'server', 'where', 'status', 'start_ms', 'end_ms', 'in_tokens', 'out_tokens')
+_BUILTIN_FLAGS = ('web_search', 'image_generation', 'code_interpreter', 'memory')
 
-    Unknown timing keys are dropped. Absent fields are omitted, not filled in.
-    """
+
+def _pick(source, keys):
+    if not isinstance(source, dict):
+        return {}
+    return {key: source[key] for key in keys if key in source}
+
+
+def allow_observatory(value):
+    """Copy only observatory/v1 fields off a response chunk. Everything else is dropped."""
+    if not isinstance(value, dict) or value.get('v') != 1:
+        return None
+    out = {'v': 1}
+    decision = _pick(value.get('decision'), _DECISION_KEYS)
+    reason = _pick((value.get('decision') or {}).get('reason') if isinstance(value.get('decision'), dict) else None, _REASON_KEYS)
+    if reason:
+        decision['reason'] = reason
+    if decision:
+        out['decision'] = decision
+    classifier = _pick(value.get('classifier'), _CLASSIFIER_KEYS)
+    if classifier:
+        out['classifier'] = classifier
+    steps = []
+    for item in value.get('steps') or []:
+        if isinstance(item, dict):
+            kept = _pick(item, _STEP_KEYS)
+            if kept.get('kind'):
+                steps.append(kept)
+        if len(steps) >= 60:
+            break
+    if steps:
+        out['steps'] = steps
+    return out if len(out) > 1 else None
+
+
+def ollama_usage(usage):
+    """Ollama's duration fields are nanoseconds. Counts pass through. Absent fields are omitted."""
+    if not isinstance(usage, dict):
+        return None
+    out = {}
+    for src, dest in (('prompt_tokens', 'prompt_tokens'), ('completion_tokens', 'completion_tokens')):
+        if type(usage.get(src)) is int and usage[src] >= 0:
+            out[dest] = usage[src]
+    for src, dest in (('load_duration', 'load_ms'), ('prompt_eval_duration', 'prompt_eval_ms'), ('eval_duration', 'eval_ms')):
+        raw = usage.get(src)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw < 0:
+            continue
+        out[dest] = round(float(raw) / 1_000_000, 3)
+    return out or None
+
+
+def context_event(body, message_id, model_info=None):
+    """Built-in flags and counts, plus how Open WebUI classifies the model connection."""
+    if not isinstance(body, dict) or not isinstance(message_id, str) or not message_id:
+        return None
+    features = body.get('features') if isinstance(body.get('features'), dict) else {}
+    event = {'type': 'context', 'turn': message_id}
+    for key in _BUILTIN_FLAGS:
+        if isinstance(features.get(key), bool):
+            event[key] = features[key]
+    if isinstance(body.get('files'), list):
+        event['files'] = min(len(body['files']), 10000)
+    if isinstance(body.get('tool_ids'), list):
+        event['tool_ids'] = min(len(body['tool_ids']), 10000)
+    owned = model_info.get('owned_by') if isinstance(model_info, dict) else None
+    if isinstance(owned, str) and owned.strip():
+        event['owned_by'] = 'ollama' if owned.strip().lower() == 'ollama' else 'external'
+    return event if len(event) > 2 else None
+
+
+def task_event(metadata, message_id):
+    """A background task name and nothing else. No prompt text."""
+    task = (metadata or {}).get('task') if isinstance(metadata, dict) else None
+    if not task or not isinstance(message_id, str) or not message_id:
+        return None
+    name = str(task)
+    name = name if __import__('re').fullmatch(r'[A-Za-z0-9_.:-]{1,40}', name) else 'task'
+    return {'type': 'task', 'turn': message_id, 'name': name}
+
+
+def outlet_facts(body):
+    """Source count and tool names only. Arguments and results are not copied."""
     if not isinstance(body, dict):
         return {}
-    extra = {}
-    if isinstance(body.get('route_reason'), str):
-        extra['route_reason'] = body['route_reason']
-    timing = body.get('timing')
-    if isinstance(timing, dict):
-        kept = {key: timing[key] for key in ('route_seconds', 'left_network_seconds') if key in timing}
-        if kept:
-            extra['timing'] = kept
-    return extra
+    out = {}
+    if isinstance(body.get('sources'), list):
+        out['sources'] = min(len(body['sources']), 10000)
+    names = []
+    messages = body.get('messages') if isinstance(body.get('messages'), list) else []
+    for row in messages:
+        if not isinstance(row, dict):
+            continue
+        calls = row.get('tool_calls') if isinstance(row.get('tool_calls'), list) else []
+        for call in calls:
+            fn = call.get('function') if isinstance(call, dict) and isinstance(call.get('function'), dict) else {}
+            name = fn.get('name')
+            if isinstance(name, str) and name.strip():
+                names.append(' '.join(name.split())[:80])
+        if row.get('role') == 'tool' and isinstance(row.get('name'), str) and row['name'].strip():
+            names.append(' '.join(row['name'].split())[:80])
+    if names:
+        out['tool_names'] = names[:60]
+    return out
 
 
 def start_event(body, message_id, send_conversation=True):
@@ -56,24 +148,40 @@ def start_event(body, message_id, send_conversation=True):
     prompt = next((text_of(row.get('content')) for row in reversed(messages) if row.get('role') == 'user'), '')
     context = '\n\n'.join(text_of(row.get('content')) for row in messages) if send_conversation else prompt
     turn = message_id if isinstance(message_id, str) and message_id else uuid.uuid4().hex
-    event = {'type': 'start', 'turn': turn, 'model': str(body.get('model') or '')[:200],
-             'prompt': prompt[:20000], 'context': context[-20000:], 'messages': len(messages)}
-    event.update(route_meta(body))
-    return event
+    return {'type': 'start', 'turn': turn, 'model': str(body.get('model') or '')[:200],
+            'prompt': prompt[:20000], 'context': context[-20000:], 'messages': len(messages)}
 
 
 def stream_events(event, message_id):
-    """Delta and end events for one streamed chunk. Empty when there is nothing to report."""
+    """Delta, tool, usage, router and end events for one streamed chunk.
+
+    Router data is read from the chunk, never from the chat request. Tool names
+    are the names Open WebUI showed the filter, with no arguments.
+    """
     if not isinstance(message_id, str) or not message_id or not isinstance(event, dict):
         return []
     out = []
+    observed = allow_observatory(event.get('observatory'))
+    if observed:
+        out.append({'type': 'observatory', 'turn': message_id, 'observatory': observed, 'via': 'router stream'})
+    usage = ollama_usage(event.get('usage'))
+    if usage:
+        out.append({'type': 'usage', 'turn': message_id, 'usage': usage})
     for choice in (event.get('choices') or []):
         if not isinstance(choice, dict):
             continue
-        piece = ((choice.get('delta') or {}) if isinstance(choice.get('delta'), dict) else {}).get('content')
+        delta = choice.get('delta') if isinstance(choice.get('delta'), dict) else {}
+        for call in delta.get('tool_calls') or []:
+            fn = call.get('function') if isinstance(call, dict) and isinstance(call.get('function'), dict) else {}
+            name = fn.get('name')
+            if isinstance(name, str) and name.strip():
+                out.append({'type': 'tool', 'turn': message_id, 'name': ' '.join(name.split())[:80], 'phase': 'start'})
+        piece = delta.get('content')
         if isinstance(piece, str) and piece:
+            out.append({'type': 'tool', 'turn': message_id, 'phase': 'end'})
             out.append({'type': 'delta', 'turn': message_id, 'text': piece})
         if choice.get('finish_reason'):
+            out.append({'type': 'tool', 'turn': message_id, 'phase': 'end'})
             out.append({'type': 'end', 'turn': message_id})
     return out
 
@@ -137,13 +245,19 @@ if BaseModel is not None:
         def __init__(self):
             self.valves = self.Valves()
 
-        def inlet(self, body: dict, __metadata__: dict = None, __message_id__: str = None) -> dict:
+        def inlet(self, body: dict, __metadata__: dict = None, __message_id__: str = None, __model__: dict = None) -> dict:
             try:
                 if (__metadata__ or {}).get('task'):
+                    event = task_event(__metadata__, __message_id__)
+                    if event:
+                        _emit(self.valves, event)
                     return body
                 event = start_event(body, __message_id__, self.valves.send_conversation)
                 if event:
                     _emit(self.valves, event)
+                    ctx = context_event(body, event['turn'], __model__)
+                    if ctx:
+                        _emit(self.valves, ctx)
             except Exception:
                 pass
             return body
@@ -164,6 +278,11 @@ if BaseModel is not None:
                 if not turn:
                     turn = ((__metadata__ or {}).get('message_id') if isinstance((__metadata__ or {}).get('message_id'), str) else None)
                 if turn:
+                    facts = outlet_facts(body)
+                    if 'sources' in facts:
+                        _emit(self.valves, {'type': 'sources', 'turn': turn, 'count': facts['sources']})
+                    for name in facts.get('tool_names') or []:
+                        _emit(self.valves, {'type': 'tool', 'turn': turn, 'name': name, 'phase': 'name'})
                     _emit(self.valves, {'type': 'end', 'turn': turn})
             except Exception:
                 pass
