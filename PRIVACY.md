@@ -1,6 +1,6 @@
 # Privacy
 
-This standalone preview reads the machine's CPU, memory and root filesystem capacity, and queries only local Ollama at 127.0.0.1:11434. It does not read Hermes records, chats, API credentials, OAuth credentials, SSH configuration or external socket ownership. It has no remote proxy endpoints.
+This standalone preview reads the machine's CPU, memory and root filesystem capacity, and queries only local Ollama at 127.0.0.1:11434. It does not read an agent framework's records, chats, API credentials, OAuth credentials, SSH configuration or external socket ownership. It has no remote proxy endpoints.
 
 The user-triggered inference test sends a fixed diagnostic prompt to local Ollama. Generated text is discarded. Numeric test results and model names are kept in memory (up to 20), cleared when the process ends. It does not collect other applications' token usage. Browser local storage remembers only the light/dark theme.
 
